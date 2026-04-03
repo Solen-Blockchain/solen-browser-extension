@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Solen Test dApp</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, sans-serif; background: #0a0a1a; color: #e0e0e0; padding: 40px; max-width: 600px; margin: 0 auto; }
+    h1 { color: #10b981; margin-bottom: 8px; }
+    .sub { color: #666; font-size: 14px; margin-bottom: 32px; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .card h3 { font-size: 14px; color: #9ca3af; margin-bottom: 12px; }
+    button { background: #10b981; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
+    button:hover { background: #059669; }
+    button:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+    button.secondary { background: #1f2937; color: #d1d5db; }
+    button.secondary:hover { background: #374151; }
+    input { background: #0d1117; border: 1px solid #374151; color: #e0e0e0; padding: 10px 12px; border-radius: 8px; width: 100%; font-size: 13px; font-family: monospace; margin-bottom: 8px; }
+    input::placeholder { color: #4b5563; }
+    .status { font-size: 12px; color: #6b7280; margin-top: 8px; }
+    .status.ok { color: #10b981; }
+    .status.err { color: #ef4444; }
+    .mono { font-family: monospace; font-size: 12px; word-break: break-all; }
+    .accounts { margin-top: 8px; }
+    .account { background: #0d1117; border: 1px solid #1f2937; border-radius: 6px; padding: 8px 12px; margin-top: 4px; font-family: monospace; font-size: 11px; color: #9ca3af; }
+    #log { background: #0d1117; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 11px; color: #9ca3af; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+    label { font-size: 12px; color: #6b7280; display: block; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Solen Test dApp</h1>
+  <p class="sub">Test page for the Solen browser wallet extension</p>
+
+  <!-- Detection -->
+  <div class="card">
+    <h3>1. Extension Detection</h3>
+    <div id="detect-status" class="status">Checking...</div>
+  </div>
+
+  <!-- Connect -->
+  <div class="card">
+    <h3>2. Connect Wallet</h3>
+    <button id="btn-connect" disabled>Connect</button>
+    <div id="connect-status" class="status"></div>
+    <div id="accounts" class="accounts"></div>
+  </div>
+
+  <!-- Send -->
+  <div class="card">
+    <h3>3. Send Transaction</h3>
+    <label>Recipient (hex account ID)</label>
+    <input id="send-to" placeholder="e.g. 094c8ccef4cf50ff..." />
+    <label>Amount (SOLEN)</label>
+    <input id="send-amount" placeholder="e.g. 1.5" />
+    <button id="btn-send" disabled>Sign & Send</button>
+    <div id="send-status" class="status"></div>
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <h3>Event Log</h3>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const logEl = document.getElementById("log");
+    function log(msg) {
+      const time = new Date().toLocaleTimeString();
+      logEl.textContent += `[${time}] ${msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // 1. Detect extension
+    function checkExtension() {
+      const el = document.getElementById("detect-status");
+      if (window.solen) {
+        el.textContent = "Solen Wallet detected!";
+        el.className = "status ok";
+        document.getElementById("btn-connect").disabled = false;
+        log("Extension detected");
+      } else {
+        el.textContent = "Extension not found. Install and reload.";
+        el.className = "status err";
+        log("Extension not found");
+      }
+    }
+
+    // Check immediately and after a short delay (injection may be async).
+    checkExtension();
+    window.addEventListener("solen#initialized", checkExtension);
+    setTimeout(checkExtension, 1000);
+
+    // 2. Connect
+    let connectedAccounts = [];
+    document.getElementById("btn-connect").addEventListener("click", async () => {
+      const statusEl = document.getElementById("connect-status");
+      const accountsEl = document.getElementById("accounts");
+      try {
+        log("Requesting connection...");
+        statusEl.textContent = "Requesting...";
+        const accounts = await window.solen.connect();
+        connectedAccounts = accounts;
+
+        if (accounts.length > 0) {
+          statusEl.textContent = `Connected: ${accounts.length} account(s)`;
+          statusEl.className = "status ok";
+          accountsEl.innerHTML = accounts.map(a =>
+            `<div class="account">${a}</div>`
+          ).join("");
+          document.getElementById("btn-send").disabled = false;
+          log(`Connected: ${accounts.length} account(s)`);
+        } else {
+          statusEl.textContent = "Connection pending — check extension popup";
+          statusEl.className = "status";
+          log("Connection pending (needs approval)");
+        }
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = "status err";
+        log(`Connection error: ${e.message}`);
+      }
+    });
+
+    // 3. Send
+    document.getElementById("btn-send").addEventListener("click", async () => {
+      const statusEl = document.getElementById("send-status");
+      const to = document.getElementById("send-to").value.trim();
+      const amount = document.getElementById("send-amount").value.trim();
+
+      if (!to || !amount) {
+        statusEl.textContent = "Enter recipient and amount";
+        statusEl.className = "status err";
+        return;
+      }
+
+      try {
+        log(`Requesting sign & submit: ${amount} SOLEN to ${to.slice(0, 16)}...`);
+        statusEl.textContent = "Requesting signature...";
+
+        const result = await window.solen.signAndSubmit({
+          to: to,
+          amount: amount,
+        });
+
+        log(`Result: ${JSON.stringify(result)}`);
+
+        if (result && result.error) {
+          statusEl.textContent = `Error: ${result.error}`;
+          statusEl.className = "status err";
+        } else {
+          statusEl.textContent = "Transaction submitted!";
+          statusEl.className = "status ok";
+        }
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+        statusEl.className = "status err";
+        log(`Send error: ${e.message}`);
+      }
+    });
+  </script>
+</body>
+</html>
