@@ -3,7 +3,7 @@
  * from the popup and content scripts.
  */
 
-import { type WalletAccount, generateKeypair, keypairFromSecret, signMessage, buildSigningMessage, formatBalance } from "../lib/wallet";
+import { type WalletAccount, generateKeypair, keypairFromSecret, signMessage, buildSigningMessage, formatBalance, addressToBytes } from "../lib/wallet";
 import { type NetworkId, networks } from "../lib/networks";
 import * as storage from "../lib/storage";
 import { getBalance, getAccount, submitOperation, getAccountTxs, type IndexedTx } from "../lib/rpc";
@@ -235,8 +235,8 @@ async function buildSignAndSubmit(
   const amountNum = parseInt(rawAmount);
 
   // 3. Build Rust-format operation.
-  const senderBytes = hexToByteArray(account.accountId);
-  const toBytes = hexToByteArray(params.to);
+  const senderBytes = Array.from(addressToBytes(account.accountId));
+  const toBytes = Array.from(addressToBytes(params.to));
   const rustActions = [{ Transfer: { to: toBytes, amount: amountNum } }];
   const chainId = networks[network].chainId;
 
@@ -284,7 +284,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       const kp = await generateKeypair();
       const account: WalletAccount = {
         name: msg.name,
-        accountId: kp.publicKey,
+        accountId: kp.accountId,
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
       };
@@ -300,7 +300,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       const kp = await keypairFromSecret(msg.secretKey);
       const account: WalletAccount = {
         name: msg.name,
-        accountId: kp.publicKey,
+        accountId: kp.accountId,
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
       };
