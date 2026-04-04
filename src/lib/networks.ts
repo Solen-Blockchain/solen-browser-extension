@@ -23,7 +23,7 @@ export const networks: Record<NetworkId, NetworkConfig> = {
     name: "Testnet",
     chainId: 9000,
     rpcUrl: "https://testnet-rpc.solenchain.io",
-    explorerUrl: "https://explorer.solenchain.io",
+    explorerUrl: "https://solenscan.io",
     color: "#f59e0b",
   },
   devnet: {
