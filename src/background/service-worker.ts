@@ -227,37 +227,64 @@ function hexToByteArray(hex: string): number[] {
   return bytes;
 }
 
+interface TxParams {
+  to: string;
+  amount: string;
+  // Token transfer fields (optional — if present, builds a Call action instead of Transfer).
+  token?: string;   // SRC-20 contract address
+  method?: string;  // contract method (default: "transfer")
+}
+
+function u128ToLeBytes(val: bigint): number[] {
+  const bytes: number[] = [];
+  for (let i = 0; i < 16; i++) {
+    bytes.push(Number(val & 0xFFn));
+    val >>= 8n;
+  }
+  return bytes;
+}
+
 async function buildSignAndSubmit(
   account: WalletAccount,
-  params: { to: string; amount: string },
+  params: TxParams,
 ): Promise<unknown> {
-  // 1. Get current nonce.
   const info = await getAccount(network, account.accountId);
-
-  // 2. Parse amount to base units.
-  const rawAmount = parseAmount(params.amount);
-  const amountNum = parseInt(rawAmount);
-
-  // 3. Build Rust-format operation.
   const senderBytes = Array.from(addressToBytes(account.accountId));
-  const toBytes = Array.from(addressToBytes(params.to));
-  const rustActions = [{ Transfer: { to: toBytes, amount: amountNum } }];
   const chainId = networks[network].chainId;
 
-  // 4. Build signing message and sign.
-  const sigMsg = buildSigningMessage(senderBytes, info.nonce, 10000, rustActions, chainId);
+  let rustActions: unknown[];
+
+  if (params.token) {
+    // SRC-20 token transfer via Call action.
+    // Args format: recipient[32] + amount[16 LE]
+    const recipientBytes = Array.from(addressToBytes(params.to));
+    const rawAmount = parseAmount(params.amount);
+    const amountBigInt = BigInt(rawAmount);
+    const amountLeBytes = u128ToLeBytes(amountBigInt);
+    const args = [...recipientBytes, ...amountLeBytes];
+    const targetBytes = Array.from(addressToBytes(params.token));
+    const method = params.method || "transfer";
+
+    rustActions = [{ Call: { target: targetBytes, method, args } }];
+  } else {
+    // Native SOLEN transfer.
+    const toBytes = Array.from(addressToBytes(params.to));
+    const rawAmount = parseAmount(params.amount);
+    const amountNum = parseInt(rawAmount);
+    rustActions = [{ Transfer: { to: toBytes, amount: amountNum } }];
+  }
+
+  const sigMsg = buildSigningMessage(senderBytes, info.nonce, 100000, rustActions, chainId);
   const signature = await signMessage(account.secretKey, sigMsg);
 
-  // 5. Build the full operation in Rust serde format.
   const operation = {
     sender: senderBytes,
     nonce: info.nonce,
     actions: rustActions,
-    max_fee: 10000,
+    max_fee: 100000,
     signature: hexToByteArray(signature),
   };
 
-  // 6. Submit.
   return submitOperation(network, operation);
 }
 
@@ -356,7 +383,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       const account = accounts.find((a) => a.accountId === activeAccountId);
       if (!account) return { error: "No active account" };
       try {
-        return await buildSignAndSubmit(account, msg.operation as { to: string; amount: string });
+        return await buildSignAndSubmit(account, msg.operation as TxParams);
       } catch (e) {
         return { error: e instanceof Error ? e.message : "Submit failed" };
       }
@@ -439,7 +466,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
           result = { error: "No active account" };
         } else {
           try {
-            result = await buildSignAndSubmit(account, req.data as { to: string; amount: string });
+            result = await buildSignAndSubmit(account, req.data as TxParams);
           } catch (e) {
             result = { error: e instanceof Error ? e.message : "Submit failed" };
           }
