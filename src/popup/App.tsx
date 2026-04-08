@@ -603,22 +603,83 @@ function DappApproval({ request, onDone }: { request: { id: string; origin: stri
     onDone();
   };
 
+  // Parse transaction details from request data.
+  const txData = request.data as { to?: string; amount?: string; token?: string; method?: string } | null;
+  const isTokenTx = txData?.token;
+  const truncAddr = (addr: string) => addr.length > 16 ? `${addr.slice(0, 8)}...${addr.slice(-6)}` : addr;
+
   return (
     <div className="flex flex-col items-center justify-center h-full px-6">
-      <div className="w-12 h-12 mb-4 rounded-2xl bg-indigo-500/20 flex items-center justify-center">
-        <svg className="w-6 h-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-        </svg>
+      <div className={`w-12 h-12 mb-4 rounded-2xl flex items-center justify-center ${
+        request.type === "connect" ? "bg-indigo-500/20" : "bg-amber-500/20"
+      }`}>
+        {request.type === "connect" ? (
+          <svg className="w-6 h-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+        ) : (
+          <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 19V5m0 0l-4 4m4-4l4 4" />
+          </svg>
+        )}
       </div>
+
       <h2 className="text-lg font-bold text-gray-200 mb-1">
         {request.type === "connect" ? "Connection Request" : "Sign Transaction"}
       </h2>
-      <p className="text-gray-500 text-xs mb-1 text-center">{request.origin}</p>
-      <p className="text-gray-400 text-xs mb-6 text-center">
-        {request.type === "connect"
-          ? "This site wants to connect to your Solen wallet."
-          : "This site wants you to sign a transaction."}
-      </p>
+      <p className="text-gray-500 text-xs mb-3 text-center">{request.origin}</p>
+
+      {request.type === "connect" ? (
+        <p className="text-gray-400 text-xs mb-6 text-center">
+          This site wants to connect to your Solen wallet.
+        </p>
+      ) : (
+        <div className="w-full bg-gray-900 rounded-xl p-4 mb-4 space-y-2">
+          {txData ? (
+            <>
+              <div className="text-center mb-2">
+                <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                  isTokenTx ? "bg-indigo-500/15 text-indigo-400" : "bg-emerald-500/15 text-emerald-400"
+                }`}>
+                  {isTokenTx ? "Token Transfer" : "SOLEN Transfer"}
+                </span>
+              </div>
+
+              {txData.amount && (
+                <div className="text-center">
+                  <span className="text-2xl font-bold text-white">{txData.amount}</span>
+                  <span className="text-sm text-gray-400 ml-1">{isTokenTx ? "STT" : "SOLEN"}</span>
+                </div>
+              )}
+
+              {txData.to && (
+                <div className="flex justify-between text-xs pt-2 border-t border-gray-800">
+                  <span className="text-gray-500">To</span>
+                  <span className="text-gray-300 font-mono">{truncAddr(txData.to)}</span>
+                </div>
+              )}
+
+              {isTokenTx && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Contract</span>
+                  <span className="text-gray-300 font-mono">{truncAddr(txData.token!)}</span>
+                </div>
+              )}
+
+              {txData.method && txData.method !== "transfer" && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Method</span>
+                  <span className="text-gray-300">{txData.method}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-gray-400 text-xs text-center">
+              This site wants you to sign a transaction.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="w-full flex gap-2">
         <button onClick={reject} className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium py-3 rounded-xl transition-colors">
