@@ -108,35 +108,30 @@ export async function getTokenBalances(network: NetworkId, accountId: string): P
 
 async function callView(network: NetworkId, contract: string, method: string, arg?: string): Promise<string> {
   try {
-    const result = await rpcCall<{ data?: string; text?: string }>(
+    const result = await rpcCall<{ return_data?: string; data?: string; success?: boolean }>(
       network, "solen_callView", [contract, method, arg || ""]
     );
-    // The RPC may return hex data or text.
-    if (result.text) return result.text;
-    if (result.data) {
-      // Try to decode as UTF-8 text.
-      const hex = result.data;
-      if (method === "balance_of") {
-        // Parse LE u128 balance.
-        if (hex.length >= 32) {
-          const bytes: number[] = [];
-          for (let i = 0; i < 32; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
-          let val = BigInt(0);
-          for (let i = bytes.length - 1; i >= 0; i--) val = (val << BigInt(8)) | BigInt(bytes[i]);
-          return val.toString();
-        }
-        return "0";
+    const hex = result.return_data || result.data || "";
+    if (!hex) return "";
+
+    if (method === "balance_of") {
+      if (hex.length >= 32) {
+        const bytes: number[] = [];
+        for (let i = 0; i < 32; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+        let val = BigInt(0);
+        for (let i = bytes.length - 1; i >= 0; i--) val = (val << BigInt(8)) | BigInt(bytes[i]);
+        return val.toString();
       }
-      if (method === "decimals") {
-        if (hex.length >= 2) return parseInt(hex.slice(0, 2), 16).toString();
-        return "8";
-      }
-      // Text fields (name, symbol): decode hex to UTF-8.
-      const textBytes: number[] = [];
-      for (let i = 0; i < hex.length; i += 2) textBytes.push(parseInt(hex.slice(i, i + 2), 16));
-      return new TextDecoder().decode(new Uint8Array(textBytes));
+      return "0";
     }
-    return "";
+    if (method === "decimals") {
+      if (hex.length >= 2) return parseInt(hex.slice(0, 2), 16).toString();
+      return "8";
+    }
+    // Text fields (name, symbol): decode hex to UTF-8.
+    const textBytes: number[] = [];
+    for (let i = 0; i < hex.length; i += 2) textBytes.push(parseInt(hex.slice(i, i + 2), 16));
+    return new TextDecoder().decode(new Uint8Array(textBytes));
   } catch {
     return "";
   }
