@@ -495,9 +495,11 @@ function ActivityList({ transactions, activeAccountId, explorerUrl }: {
             <div className="text-right">
               {tx.amount && (
                 <div className={`text-xs font-medium ${
-                  isStake ? "text-blue-400" : isSent ? "text-gray-300" : "text-emerald-400"
+                  isStake ? "text-blue-400"
+                    : tx.token_symbol && tx.token_symbol !== "SOLEN" ? "text-indigo-400"
+                    : isSent ? "text-gray-300" : "text-emerald-400"
                 }`}>
-                  {isSent && !isStake ? "-" : "+"}{formatBalance(tx.amount)} SOLEN
+                  {isSent && !isStake ? "-" : "+"}{formatBalance(tx.amount)} {tx.token_symbol || "SOLEN"}
                 </div>
               )}
               {!tx.success && <div className="text-[10px] text-red-400">Failed</div>}

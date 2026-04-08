@@ -36,6 +36,7 @@ export interface TxSummary {
   type: string;
   amount: string | null;
   to: string | null;
+  token_symbol: string | null;
 }
 
 export interface TokenBalance {

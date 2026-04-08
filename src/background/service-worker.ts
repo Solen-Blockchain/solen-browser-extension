@@ -151,10 +151,20 @@ setInterval(() => {
 
 // ── State snapshot ────────────────────────────────────────────
 
+function parseLeU128(hex: string): string {
+  const bytes = [];
+  for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+  let val = BigInt(0);
+  for (let i = bytes.length - 1; i >= 0; i--) val = (val << BigInt(8)) | BigInt(bytes[i]);
+  return val.toString();
+}
+
 function summarizeTxs() {
   return transactions.map((tx) => {
     // Detect tx type from events.
-    const transferEvt = tx.events.find((e) => e.topic === "transfer");
+    // Native transfers: emitter = sender. Token transfers: emitter = contract address.
+    const nativeTransferEvt = tx.events.find((e) => e.topic === "transfer" && e.emitter === tx.sender);
+    const tokenTransferEvt = tx.events.find((e) => e.topic === "transfer" && e.emitter !== tx.sender);
     const stakeEvt = tx.events.find((e) => e.topic === "delegate" || e.topic === "undelegate");
     const intentEvt = tx.events.find((e) => e.topic === "intent_fulfilled");
     const rewardEvt = tx.events.find((e) => e.topic === "epoch_reward" || e.topic === "delegator_reward");
@@ -162,30 +172,31 @@ function summarizeTxs() {
     let type = "Transaction";
     let amount: string | null = null;
     let to: string | null = null;
+    let token_symbol: string | null = null;
 
     if (intentEvt) {
       type = "Intent";
     }
-    if (transferEvt && transferEvt.data.length >= 96) {
+
+    if (nativeTransferEvt && nativeTransferEvt.data.length >= 96) {
       type = intentEvt ? "Intent" : "Transfer";
-      to = transferEvt.data.slice(0, 64);
-      // Parse LE u128 amount.
-      const hex = transferEvt.data.slice(64, 96);
-      const bytes = [];
-      for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
-      let val = BigInt(0);
-      for (let i = bytes.length - 1; i >= 0; i--) val = (val << BigInt(8)) | BigInt(bytes[i]);
-      amount = val.toString();
+      to = nativeTransferEvt.data.slice(0, 64);
+      amount = parseLeU128(nativeTransferEvt.data.slice(64, 96));
+      token_symbol = "SOLEN";
+    } else if (tokenTransferEvt && tokenTransferEvt.data.length >= 96) {
+      type = "Token Transfer";
+      to = tokenTransferEvt.data.slice(0, 64);
+      amount = parseLeU128(tokenTransferEvt.data.slice(64, 96));
+      // Try to get symbol from cached tokens.
+      const cachedToken = tokens.find(t => t.contract === tokenTransferEvt.emitter);
+      token_symbol = cachedToken?.symbol || "Token";
     } else if (stakeEvt && stakeEvt.data.length >= 96) {
       type = stakeEvt.topic === "delegate" ? "Stake" : "Unstake";
-      const hex = stakeEvt.data.slice(64, 96);
-      const bytes = [];
-      for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
-      let val = BigInt(0);
-      for (let i = bytes.length - 1; i >= 0; i--) val = (val << BigInt(8)) | BigInt(bytes[i]);
-      amount = val.toString();
+      amount = parseLeU128(stakeEvt.data.slice(64, 96));
+      token_symbol = "SOLEN";
     } else if (rewardEvt) {
       type = "Reward";
+      token_symbol = "SOLEN";
     }
 
     return {
@@ -196,6 +207,7 @@ function summarizeTxs() {
       type,
       amount,
       to,
+      token_symbol,
     };
   });
 }
