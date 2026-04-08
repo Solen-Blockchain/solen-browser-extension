@@ -228,7 +228,7 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
           onClick={copyAddress}
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-400 font-mono truncate hover:border-gray-600 transition-colors text-center"
         >
-          {copied ? "Copied!" : activeAccount ? `${activeAccount.accountId.slice(0, 12)}...${activeAccount.accountId.slice(-6)}` : ""}
+          {copied ? "Copied!" : activeAccount?.accountId ? `${activeAccount.accountId.slice(0, 12)}...${activeAccount.accountId.slice(-6)}` : "No account"}
         </button>
       </div>
 
@@ -282,7 +282,7 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
         {activeTab === "tokens" ? (
           <TokensList
             balance={state.balance}
-            tokens={state.tokens || []}
+            tokens={Array.isArray(state.tokens) ? state.tokens : []}
             onSelect={setSelectedToken}
           />
         ) : (
@@ -342,7 +342,7 @@ function TokensList({ balance, tokens, onSelect }: {
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold ${
               token.symbol === "SOLEN" ? "bg-emerald-500/15 text-emerald-400" : "bg-indigo-500/15 text-indigo-400"
             }`}>
-              {token.symbol.slice(0, 2)}
+              {(token.symbol || "??").slice(0, 2)}
             </div>
             <div>
               <div className="text-sm text-gray-200 font-medium">{token.name}</div>
@@ -389,7 +389,7 @@ function TokenDetail({ token, net, onBack, onRefresh, network }: {
         <div className={`w-14 h-14 mx-auto mb-3 rounded-full flex items-center justify-center text-lg font-bold ${
           token.symbol === "SOLEN" ? "bg-emerald-500/15 text-emerald-400" : "bg-indigo-500/15 text-indigo-400"
         }`}>
-          {token.symbol.slice(0, 2)}
+          {(token.symbol || "??").slice(0, 2)}
         </div>
         <p className="text-3xl font-bold text-white mb-1">
           {formatBalance(token.balance)}
@@ -441,7 +441,7 @@ function TokenDetail({ token, net, onBack, onRefresh, network }: {
                 rel="noopener noreferrer"
                 className="text-emerald-400 hover:text-emerald-300 font-mono truncate ml-2"
               >
-                {token.contract.slice(0, 8)}...{token.contract.slice(-6)}
+                {(token.contract || "").slice(0, 8)}...{(token.contract || "").slice(-6)}
               </a>
             </div>
           )}
