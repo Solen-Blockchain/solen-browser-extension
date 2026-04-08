@@ -58,6 +58,17 @@ export interface TokenInfo {
   decimals: number;
 }
 
+function base58ToHex(b58: string): string {
+  const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let n = BigInt(0);
+  for (const c of b58) {
+    const idx = ALPHABET.indexOf(c);
+    if (idx < 0) return "";
+    n = n * 58n + BigInt(idx);
+  }
+  return n.toString(16).padStart(64, "0");
+}
+
 export async function getTokenBalances(network: NetworkId, accountId: string): Promise<TokenInfo[]> {
   const apiUrl = network === "devnet"
     ? "http://127.0.0.1:29955"
@@ -65,12 +76,15 @@ export async function getTokenBalances(network: NetworkId, accountId: string): P
       ? "https://testnet-api.solenchain.io"
       : "https://api.solenchain.io";
 
+  // Convert account ID to hex for callView args.
+  const accountHex = base58ToHex(accountId);
+  if (!accountHex) return [];
+
   try {
     const res = await fetch(`${apiUrl}/api/accounts/${accountId}/tokens`);
     if (!res.ok) return [];
     const data = await res.json();
 
-    // API may return just contract addresses or full objects.
     if (!Array.isArray(data)) return [];
 
     const tokens: TokenInfo[] = [];
@@ -78,13 +92,12 @@ export async function getTokenBalances(network: NetworkId, accountId: string): P
       const contract = typeof item === "string" ? item : item.contract;
       if (!contract) continue;
 
-      // Fetch token metadata and balance via callView.
       try {
         const [nameRes, symbolRes, decimalsRes, balRes] = await Promise.all([
           callView(network, contract, "name"),
           callView(network, contract, "symbol"),
           callView(network, contract, "decimals"),
-          callView(network, contract, "balance_of", accountId),
+          callView(network, contract, "balance_of", accountHex),
         ]);
 
         const name = nameRes || "Unknown Token";
