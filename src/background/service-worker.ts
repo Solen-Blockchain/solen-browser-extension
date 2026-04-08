@@ -434,6 +434,19 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       return { accounts: accounts.map((a) => a.accountId) };
     }
 
+    case "DAPP_SIGN_MESSAGE": {
+      if (isLocked) return { error: "Wallet is locked" };
+      const account = accounts.find((a) => a.accountId === activeAccountId);
+      if (!account) return { error: "No active account" };
+      try {
+        const msgHex = (msg as { origin: string; message: string }).message;
+        const sig = await signMessage(account.secretKey, hexToBytes(msgHex));
+        return { signature: sig };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "Sign failed" };
+      }
+    }
+
     case "DAPP_SIGN_AND_SUBMIT": {
       if (isLocked) return { error: "Wallet is locked" };
       const signId = uuid();

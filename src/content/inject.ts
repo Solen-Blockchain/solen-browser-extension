@@ -31,6 +31,9 @@ window.addEventListener("message", async (event) => {
       case "signAndSubmit":
         response = await chrome.runtime.sendMessage({ type: "DAPP_SIGN_AND_SUBMIT", origin, operation: params });
         break;
+      case "signMessage":
+        response = await chrome.runtime.sendMessage({ type: "DAPP_SIGN_MESSAGE", origin, message: (params as { message: string }).message });
+        break;
       default:
         response = { error: `Unknown method: ${method}` };
     }
