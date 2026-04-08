@@ -2,12 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
+html, body, #root {
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   margin: 0;
   width: 360px;
   height: 600px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 ::-webkit-scrollbar { width: 4px; }
