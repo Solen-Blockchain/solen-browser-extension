@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { WalletState, BackgroundRequest } from "../lib/messages";
+import type { WalletState, BackgroundRequest, TokenBalance } from "../lib/messages";
 import { networks, type NetworkId } from "../lib/networks";
 import { formatBalance } from "../lib/wallet";
 
@@ -163,6 +163,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
 
 function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => void }) {
   const [showSend, setShowSend] = useState(false);
+  const [activeTab, setActiveTab] = useState<"tokens" | "activity">("tokens");
+  const [selectedToken, setSelectedToken] = useState<TokenBalance | null>(null);
   const [copied, setCopied] = useState(false);
   const activeAccount = state.accounts.find((a) => a.accountId === state.activeAccountId);
   const net = networks[state.network as NetworkId];
@@ -175,11 +177,25 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
     }
   };
 
+  // Token detail view
+  if (selectedToken) {
+    return (
+      <TokenDetail
+        token={selectedToken}
+        net={net}
+        onBack={() => setSelectedToken(null)}
+        onRefresh={onRefresh}
+        network={state.network as NetworkId}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
         <div className="flex items-center gap-2">
+          <img src={chrome.runtime.getURL("icons/icon48.png")} alt="Solen" className="w-5 h-5" />
           <div className="text-sm font-bold"><span className="text-emerald-400">Solen</span></div>
           <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: net.color + "20", color: net.color }}>
             {net.name}
@@ -205,37 +221,35 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
         </div>
       </div>
 
-      {/* Balance */}
-      <div className="px-4 py-6 text-center">
+      {/* Account ID */}
+      <div className="px-4 pt-4 pb-2">
         <p className="text-xs text-gray-500 mb-1">{activeAccount?.name || "Account"}</p>
-        <p className="text-3xl font-bold text-white mb-1">
-          {state.balance ? formatBalance(state.balance) : "..."}
-        </p>
-        <p className="text-xs text-gray-500">SOLEN</p>
-      </div>
-
-      {/* Address */}
-      <div className="px-4 mb-4">
         <button
           onClick={copyAddress}
           className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-400 font-mono truncate hover:border-gray-600 transition-colors text-center"
         >
-          {copied ? "Copied!" : activeAccount ? `${activeAccount.accountId.slice(0, 16)}...${activeAccount.accountId.slice(-8)}` : ""}
+          {copied ? "Copied!" : activeAccount ? `${activeAccount.accountId.slice(0, 12)}...${activeAccount.accountId.slice(-6)}` : ""}
         </button>
       </div>
 
-      {/* Actions */}
-      <div className="px-4 flex gap-2 mb-4">
+      {/* Send / Receive */}
+      <div className="px-4 flex gap-2 mb-3">
         <button
           onClick={() => setShowSend(true)}
-          className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
+          className="flex-1 flex flex-col items-center gap-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-medium py-3 rounded-xl transition-colors"
         >
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-4 4m4-4l4 4" />
+          </svg>
           Send
         </button>
         <button
           onClick={copyAddress}
-          className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium py-2.5 rounded-xl transition-colors"
+          className="flex-1 flex flex-col items-center gap-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-medium py-3 rounded-xl transition-colors"
         >
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m0 0l-4-4m4 4l4-4" />
+          </svg>
           Receive
         </button>
       </div>
@@ -243,74 +257,40 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
       {/* Send form */}
       {showSend && <SendForm network={state.network as NetworkId} onClose={() => setShowSend(false)} onRefresh={onRefresh} />}
 
-      {/* Transaction history */}
-      <div className="flex-1 overflow-y-auto px-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-gray-500 font-medium">Activity</span>
-          {activeAccount && (
-            <a
-              href={`${net.explorerUrl}/account/${activeAccount.accountId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[10px] text-emerald-500 hover:text-emerald-400"
-            >
-              View all
-            </a>
-          )}
-        </div>
-        {state.transactions.length === 0 ? (
-          <div className="text-center py-6 text-xs text-gray-600">No activity yet</div>
-        ) : (
-          <div className="space-y-1">
-            {state.transactions.map((tx) => {
-              const isSent = tx.sender === state.activeAccountId;
-              const isReward = tx.type === "Reward";
-              const isStake = tx.type === "Stake" || tx.type === "Unstake";
-              const isIntent = tx.type === "Intent";
+      {/* Tabs */}
+      <div className="px-4 flex gap-1 mb-2">
+        <button
+          onClick={() => setActiveTab("tokens")}
+          className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
+            activeTab === "tokens" ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"
+          }`}
+        >
+          Tokens
+        </button>
+        <button
+          onClick={() => setActiveTab("activity")}
+          className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
+            activeTab === "activity" ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"
+          }`}
+        >
+          Activity
+        </button>
+      </div>
 
-              return (
-                <a
-                  key={`${tx.block_height}-${tx.index}`}
-                  href={`${net.explorerUrl}/tx/${tx.block_height}/${tx.index}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-gray-900/50 transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                      isIntent ? "bg-cyan-500/10 text-cyan-400"
-                        : isReward ? "bg-amber-500/10 text-amber-400"
-                        : isStake ? "bg-blue-500/10 text-blue-400"
-                        : tx.success ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-                    }`}>
-                      {isIntent ? "IN" : isReward ? "RW" : isStake ? "ST" : isSent ? "OUT" : "IN"}
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-300">
-                        {tx.type}
-                      </div>
-                      <div className="text-[10px] text-gray-600">
-                        Block #{tx.block_height}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    {tx.amount && (
-                      <div className={`text-xs font-medium ${
-                        isStake ? "text-blue-400"
-                          : isSent ? "text-gray-300" : "text-emerald-400"
-                      }`}>
-                        {isSent && !isStake ? "-" : "+"}{formatBalance(tx.amount)} SOLEN
-                      </div>
-                    )}
-                    {!tx.success && (
-                      <div className="text-[10px] text-red-400">Failed</div>
-                    )}
-                  </div>
-                </a>
-              );
-            })}
-          </div>
+      {/* Tab Content */}
+      <div className="flex-1 overflow-y-auto px-4">
+        {activeTab === "tokens" ? (
+          <TokensList
+            balance={state.balance}
+            tokens={state.tokens || []}
+            onSelect={setSelectedToken}
+          />
+        ) : (
+          <ActivityList
+            transactions={state.transactions}
+            activeAccountId={state.activeAccountId}
+            explorerUrl={net.explorerUrl}
+          />
         )}
       </div>
 
@@ -329,6 +309,202 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
           </select>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Tokens List ──────────────────────────────────────────────
+
+function TokensList({ balance, tokens, onSelect }: {
+  balance: string | null;
+  tokens: TokenBalance[];
+  onSelect: (t: TokenBalance) => void;
+}) {
+  const solenToken: TokenBalance = {
+    contract: "native",
+    symbol: "SOLEN",
+    name: "Solen",
+    balance: balance || "0",
+    decimals: 8,
+  };
+
+  const allTokens = [solenToken, ...tokens];
+
+  return (
+    <div className="space-y-1">
+      {allTokens.map((token) => (
+        <button
+          key={token.contract}
+          onClick={() => onSelect(token)}
+          className="w-full flex items-center justify-between py-3 px-3 rounded-xl hover:bg-gray-900/50 transition-colors text-left"
+        >
+          <div className="flex items-center gap-3">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold ${
+              token.symbol === "SOLEN" ? "bg-emerald-500/15 text-emerald-400" : "bg-indigo-500/15 text-indigo-400"
+            }`}>
+              {token.symbol.slice(0, 2)}
+            </div>
+            <div>
+              <div className="text-sm text-gray-200 font-medium">{token.name}</div>
+              <div className="text-[10px] text-gray-500">{token.symbol}</div>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-sm text-gray-200 font-medium">
+              {formatBalance(token.balance)}
+            </div>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Token Detail ─────────────────────────────────────────────
+
+function TokenDetail({ token, net, onBack, onRefresh, network }: {
+  token: TokenBalance;
+  net: { name: string; color: string; explorerUrl: string };
+  onBack: () => void;
+  onRefresh: () => void;
+  network: NetworkId;
+}) {
+  const [showSend, setShowSend] = useState(false);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-2">
+        <button onClick={onBack} className="p-1 text-gray-500 hover:text-gray-300">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <span className="text-sm font-bold text-gray-200">{token.name}</span>
+        <span className="text-xs text-gray-500">({token.symbol})</span>
+      </div>
+
+      {/* Balance */}
+      <div className="px-4 py-8 text-center">
+        <div className={`w-14 h-14 mx-auto mb-3 rounded-full flex items-center justify-center text-lg font-bold ${
+          token.symbol === "SOLEN" ? "bg-emerald-500/15 text-emerald-400" : "bg-indigo-500/15 text-indigo-400"
+        }`}>
+          {token.symbol.slice(0, 2)}
+        </div>
+        <p className="text-3xl font-bold text-white mb-1">
+          {formatBalance(token.balance)}
+        </p>
+        <p className="text-xs text-gray-500">{token.symbol}</p>
+      </div>
+
+      {/* Actions */}
+      <div className="px-4 flex gap-2 mb-4">
+        <button
+          onClick={() => setShowSend(true)}
+          className="flex-1 flex flex-col items-center gap-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-medium py-3 rounded-xl transition-colors"
+        >
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-4 4m4-4l4 4" />
+          </svg>
+          Send
+        </button>
+        <button
+          onClick={onBack}
+          className="flex-1 flex flex-col items-center gap-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-medium py-3 rounded-xl transition-colors"
+        >
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m0 0l-4-4m4 4l4-4" />
+          </svg>
+          Receive
+        </button>
+      </div>
+
+      {showSend && <SendForm network={network} onClose={() => setShowSend(false)} onRefresh={onRefresh} />}
+
+      {/* Token Info */}
+      <div className="px-4 flex-1">
+        <div className="bg-gray-900 rounded-xl p-4 space-y-3">
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-500">Token</span>
+            <span className="text-gray-300">{token.name} ({token.symbol})</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-500">Decimals</span>
+            <span className="text-gray-300">{token.decimals}</span>
+          </div>
+          {token.contract !== "native" && (
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Contract</span>
+              <a
+                href={`${net.explorerUrl}/account/${token.contract}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-400 hover:text-emerald-300 font-mono truncate ml-2"
+              >
+                {token.contract.slice(0, 8)}...{token.contract.slice(-6)}
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Activity List ────────────────────────────────────────────
+
+function ActivityList({ transactions, activeAccountId, explorerUrl }: {
+  transactions: WalletState["transactions"];
+  activeAccountId: string | null;
+  explorerUrl: string;
+}) {
+  if (transactions.length === 0) {
+    return <div className="text-center py-6 text-xs text-gray-600">No activity yet</div>;
+  }
+
+  return (
+    <div className="space-y-1">
+      {transactions.map((tx) => {
+        const isSent = tx.sender === activeAccountId;
+        const isReward = tx.type === "Reward";
+        const isStake = tx.type === "Stake" || tx.type === "Unstake";
+        const isIntent = tx.type === "Intent";
+
+        return (
+          <a
+            key={`${tx.block_height}-${tx.index}`}
+            href={`${explorerUrl}/tx/${tx.block_height}/${tx.index}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-gray-900/50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                isIntent ? "bg-cyan-500/10 text-cyan-400"
+                  : isReward ? "bg-amber-500/10 text-amber-400"
+                  : isStake ? "bg-blue-500/10 text-blue-400"
+                  : tx.success ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
+              }`}>
+                {isIntent ? "IN" : isReward ? "RW" : isStake ? "ST" : isSent ? "OUT" : "IN"}
+              </div>
+              <div>
+                <div className="text-xs text-gray-300">{tx.type}</div>
+                <div className="text-[10px] text-gray-600">Block #{tx.block_height}</div>
+              </div>
+            </div>
+            <div className="text-right">
+              {tx.amount && (
+                <div className={`text-xs font-medium ${
+                  isStake ? "text-blue-400" : isSent ? "text-gray-300" : "text-emerald-400"
+                }`}>
+                  {isSent && !isStake ? "-" : "+"}{formatBalance(tx.amount)} SOLEN
+                </div>
+              )}
+              {!tx.success && <div className="text-[10px] text-red-400">Failed</div>}
+            </div>
+          </a>
+        );
+      })}
     </div>
   );
 }

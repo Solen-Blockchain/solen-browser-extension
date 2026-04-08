@@ -6,7 +6,7 @@
 import { type WalletAccount, generateKeypair, keypairFromSecret, signMessage, buildSigningMessage, formatBalance, addressToBytes } from "../lib/wallet";
 import { type NetworkId, networks } from "../lib/networks";
 import * as storage from "../lib/storage";
-import { getBalance, getAccount, submitOperation, getAccountTxs, type IndexedTx } from "../lib/rpc";
+import { getBalance, getAccount, submitOperation, getAccountTxs, getTokenBalances, type IndexedTx, type TokenInfo } from "../lib/rpc";
 import type { BackgroundRequest, WalletState, DappRequest } from "../lib/messages";
 import { hexToBytes, bytesToHex } from "@noble/hashes/utils";
 
@@ -26,6 +26,7 @@ let network: NetworkId = "testnet";
 let isLocked = true;
 let sessionPassword: string | null = null;
 let balance: string | null = null;
+let tokens: TokenInfo[] = [];
 let transactions: IndexedTx[] = [];
 let pendingDappRequest: DappRequest | null = null;
 let dappRequestResolvers: Map<string, (result: unknown) => void> = new Map();
@@ -128,13 +129,15 @@ async function unlock(password: string): Promise<boolean> {
 // ── Balance ───────────────────────────────────────────────────
 
 async function refreshBalance() {
-  if (!activeAccountId) { balance = null; transactions = []; return; }
+  if (!activeAccountId) { balance = null; tokens = []; transactions = []; return; }
   try {
-    const [bal, txs] = await Promise.all([
+    const [bal, toks, txs] = await Promise.all([
       getBalance(network, activeAccountId),
+      getTokenBalances(network, activeAccountId),
       getAccountTxs(network, activeAccountId, 10),
     ]);
     balance = bal;
+    tokens = toks;
     transactions = txs;
   } catch {
     balance = null;
@@ -205,6 +208,7 @@ function getState(): WalletState {
     activeAccountId,
     network,
     balance,
+    tokens: tokens.map(t => ({ contract: t.contract, symbol: t.symbol, name: t.name, balance: t.balance, decimals: t.decimals })),
     transactions: summarizeTxs(),
     pendingDappRequest,
   };

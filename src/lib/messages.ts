@@ -38,6 +38,14 @@ export interface TxSummary {
   to: string | null;
 }
 
+export interface TokenBalance {
+  contract: string;
+  symbol: string;
+  name: string;
+  balance: string;
+  decimals: number;
+}
+
 export interface WalletState {
   isLocked: boolean;
   hasPassword: boolean;
@@ -45,6 +53,7 @@ export interface WalletState {
   activeAccountId: string | null;
   network: string;
   balance: string | null;
+  tokens: TokenBalance[];
   transactions: TxSummary[];
   pendingDappRequest: DappRequest | null;
 }

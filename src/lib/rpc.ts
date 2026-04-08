@@ -50,6 +50,30 @@ export interface IndexedTx {
   events: { block_height: number; tx_index: number; emitter: string; topic: string; data: string }[];
 }
 
+export interface TokenInfo {
+  contract: string;
+  symbol: string;
+  name: string;
+  balance: string;
+  decimals: number;
+}
+
+export async function getTokenBalances(network: NetworkId, accountId: string): Promise<TokenInfo[]> {
+  const apiUrl = network === "devnet"
+    ? "http://127.0.0.1:29955"
+    : network === "testnet"
+      ? "https://testnet-api.solenchain.io"
+      : "https://api.solenchain.io";
+
+  try {
+    const res = await fetch(`${apiUrl}/api/accounts/${accountId}/tokens`);
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
 export async function getAccountTxs(network: NetworkId, accountId: string, limit = 10): Promise<IndexedTx[]> {
   const apiUrl = network === "devnet"
     ? "http://127.0.0.1:29955"
