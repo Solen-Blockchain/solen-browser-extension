@@ -68,9 +68,77 @@ export async function getTokenBalances(network: NetworkId, accountId: string): P
   try {
     const res = await fetch(`${apiUrl}/api/accounts/${accountId}/tokens`);
     if (!res.ok) return [];
-    return res.json();
+    const data = await res.json();
+
+    // API may return just contract addresses or full objects.
+    if (!Array.isArray(data)) return [];
+
+    const tokens: TokenInfo[] = [];
+    for (const item of data) {
+      const contract = typeof item === "string" ? item : item.contract;
+      if (!contract) continue;
+
+      // Fetch token metadata and balance via callView.
+      try {
+        const [nameRes, symbolRes, decimalsRes, balRes] = await Promise.all([
+          callView(network, contract, "name"),
+          callView(network, contract, "symbol"),
+          callView(network, contract, "decimals"),
+          callView(network, contract, "balance_of", accountId),
+        ]);
+
+        const name = nameRes || "Unknown Token";
+        const symbol = symbolRes || "???";
+        const decimals = decimalsRes ? parseInt(decimalsRes, 10) || 8 : 8;
+        const balance = balRes || "0";
+
+        // Skip tokens with zero balance.
+        if (balance === "0" || balance === "") continue;
+
+        tokens.push({ contract, symbol, name, balance, decimals });
+      } catch {
+        // Skip tokens we can't query.
+      }
+    }
+    return tokens;
   } catch {
     return [];
+  }
+}
+
+async function callView(network: NetworkId, contract: string, method: string, arg?: string): Promise<string> {
+  try {
+    const result = await rpcCall<{ data?: string; text?: string }>(
+      network, "solen_callView", [contract, method, arg || ""]
+    );
+    // The RPC may return hex data or text.
+    if (result.text) return result.text;
+    if (result.data) {
+      // Try to decode as UTF-8 text.
+      const hex = result.data;
+      if (method === "balance_of") {
+        // Parse LE u128 balance.
+        if (hex.length >= 32) {
+          const bytes: number[] = [];
+          for (let i = 0; i < 32; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+          let val = BigInt(0);
+          for (let i = bytes.length - 1; i >= 0; i--) val = (val << BigInt(8)) | BigInt(bytes[i]);
+          return val.toString();
+        }
+        return "0";
+      }
+      if (method === "decimals") {
+        if (hex.length >= 2) return parseInt(hex.slice(0, 2), 16).toString();
+        return "8";
+      }
+      // Text fields (name, symbol): decode hex to UTF-8.
+      const textBytes: number[] = [];
+      for (let i = 0; i < hex.length; i += 2) textBytes.push(parseInt(hex.slice(i, i + 2), 16));
+      return new TextDecoder().decode(new Uint8Array(textBytes));
+    }
+    return "";
+  } catch {
+    return "";
   }
 }
 
