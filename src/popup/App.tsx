@@ -728,9 +728,18 @@ function DappApproval({ request, onDone }: { request: { id: string; origin: stri
   };
 
   // Parse transaction details from request data.
-  const txData = request.data as { to?: string; amount?: string; token?: string; method?: string } | null;
+  const txData = request.data as { to?: string; amount?: string; token?: string; method?: string; actions?: { type: string; to?: string; target?: string; amount?: string; method?: string }[] } | null;
+  const isMultiAction = txData?.actions && txData.actions.length > 0;
   const isTokenTx = txData?.token;
+  const isContractCall = txData?.method && !isTokenTx && !isMultiAction;
   const truncAddr = (addr: string) => addr.length > 16 ? `${addr.slice(0, 8)}...${addr.slice(-6)}` : addr;
+
+  const getTxLabel = () => {
+    if (isMultiAction) return `${txData!.actions!.length} Actions`;
+    if (isContractCall) return "Contract Call";
+    if (isTokenTx) return "Token Transfer";
+    return "SOLEN Transfer";
+  };
 
   return (
     <div className="flex flex-col items-center justify-center h-full px-6">
@@ -763,38 +772,56 @@ function DappApproval({ request, onDone }: { request: { id: string; origin: stri
             <>
               <div className="text-center mb-2">
                 <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                  isMultiAction ? "bg-purple-500/15 text-purple-400" :
+                  isContractCall ? "bg-amber-500/15 text-amber-400" :
                   isTokenTx ? "bg-indigo-500/15 text-indigo-400" : "bg-emerald-500/15 text-emerald-400"
                 }`}>
-                  {isTokenTx ? "Token Transfer" : "SOLEN Transfer"}
+                  {getTxLabel()}
                 </span>
               </div>
 
-              {txData.amount && (
-                <div className="text-center">
-                  <span className="text-2xl font-bold text-white">{txData.amount}</span>
-                  <span className="text-sm text-gray-400 ml-1">{isTokenTx ? "STT" : "SOLEN"}</span>
+              {isMultiAction ? (
+                <div className="space-y-1">
+                  {txData.actions!.map((a, i) => (
+                    <div key={i} className="flex justify-between text-xs py-1 border-t border-gray-800">
+                      <span className="text-gray-500">{i + 1}. {a.type === 'transfer' ? 'Transfer' : 'Call'}</span>
+                      <span className="text-gray-300 font-mono text-right">
+                        {a.type === 'transfer' ? `${a.amount} SOLEN` : `${a.method || 'call'}()`}
+                        {(a.to || a.target) && <><br /><span className="text-gray-500">{truncAddr(a.to || a.target || '')}</span></>}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              )}
+              ) : (
+                <>
+                  {txData.amount && (
+                    <div className="text-center">
+                      <span className="text-2xl font-bold text-white">{txData.amount}</span>
+                      <span className="text-sm text-gray-400 ml-1">{isTokenTx ? "Token" : "SOLEN"}</span>
+                    </div>
+                  )}
 
-              {txData.to && (
-                <div className="flex justify-between text-xs pt-2 border-t border-gray-800">
-                  <span className="text-gray-500">To</span>
-                  <span className="text-gray-300 font-mono">{truncAddr(txData.to)}</span>
-                </div>
-              )}
+                  {txData.to && (
+                    <div className="flex justify-between text-xs pt-2 border-t border-gray-800">
+                      <span className="text-gray-500">{isContractCall ? "Contract" : "To"}</span>
+                      <span className="text-gray-300 font-mono">{truncAddr(txData.to)}</span>
+                    </div>
+                  )}
 
-              {isTokenTx && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">Contract</span>
-                  <span className="text-gray-300 font-mono">{truncAddr(txData.token!)}</span>
-                </div>
-              )}
+                  {txData.method && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Method</span>
+                      <span className="text-gray-300">{txData.method}</span>
+                    </div>
+                  )}
 
-              {txData.method && txData.method !== "transfer" && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">Method</span>
-                  <span className="text-gray-300">{txData.method}</span>
-                </div>
+                  {isTokenTx && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Token</span>
+                      <span className="text-gray-300 font-mono">{truncAddr(txData.token!)}</span>
+                    </div>
+                  )}
+                </>
               )}
             </>
           ) : (

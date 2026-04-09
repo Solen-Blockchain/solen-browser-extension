@@ -239,12 +239,24 @@ function hexToByteArray(hex: string): number[] {
   return bytes;
 }
 
+interface TxAction {
+  type: 'transfer' | 'call';
+  to?: string;      // for transfer
+  target?: string;  // for call
+  amount?: string;
+  method?: string;
+  args?: string;    // hex-encoded args
+}
+
 interface TxParams {
-  to: string;
-  amount: string;
+  to?: string;
+  amount?: string;
   // Token transfer fields (optional — if present, builds a Call action instead of Transfer).
   token?: string;   // SRC-20 contract address
   method?: string;  // contract method (default: "transfer")
+  args?: string;    // hex args for direct contract call
+  // Multi-action support.
+  actions?: TxAction[];
 }
 
 function u128ToLeBytes(val: bigint): number[] {
@@ -266,22 +278,42 @@ async function buildSignAndSubmit(
 
   let rustActions: unknown[];
 
-  if (params.token) {
+  if (params.actions && params.actions.length > 0) {
+    // Multi-action operation.
+    rustActions = params.actions.map((a: TxAction) => {
+      if (a.type === 'transfer') {
+        const toBytes = Array.from(addressToBytes(a.to!));
+        const rawAmount = parseAmount(a.amount || '0');
+        const amountNum = parseInt(rawAmount);
+        return { Transfer: { to: toBytes, amount: amountNum } };
+      } else if (a.type === 'call') {
+        const targetAddr = a.target!;
+        const targetBytes = Array.from(addressToBytes(targetAddr));
+        const method = a.method || 'call';
+        const args = a.args ? Array.from(hexToBytes(a.args)) : [];
+        return { Call: { target: targetBytes, method, args } };
+      }
+      throw new Error('Unknown action type: ' + a.type);
+    });
+  } else if (params.token) {
     // SRC-20 token transfer via Call action.
-    // Args format: recipient[32] + amount[16 LE]
-    const recipientBytes = Array.from(addressToBytes(params.to));
-    const rawAmount = parseAmount(params.amount);
+    const recipientBytes = Array.from(addressToBytes(params.to!));
+    const rawAmount = parseAmount(params.amount || '0');
     const amountBigInt = BigInt(rawAmount);
     const amountLeBytes = u128ToLeBytes(amountBigInt);
     const args = [...recipientBytes, ...amountLeBytes];
     const targetBytes = Array.from(addressToBytes(params.token));
     const method = params.method || "transfer";
-
     rustActions = [{ Call: { target: targetBytes, method, args } }];
+  } else if (params.method && params.to) {
+    // Direct contract call (single action).
+    const targetBytes = Array.from(addressToBytes(params.to));
+    const args = params.args ? Array.from(hexToBytes(params.args)) : [];
+    rustActions = [{ Call: { target: targetBytes, method: params.method, args } }];
   } else {
     // Native SOLEN transfer.
-    const toBytes = Array.from(addressToBytes(params.to));
-    const rawAmount = parseAmount(params.amount);
+    const toBytes = Array.from(addressToBytes(params.to!));
+    const rawAmount = parseAmount(params.amount || '0');
     const amountNum = parseInt(rawAmount);
     rustActions = [{ Transfer: { to: toBytes, amount: amountNum } }];
   }
