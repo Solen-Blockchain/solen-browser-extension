@@ -10,6 +10,19 @@ script.src = chrome.runtime.getURL("inpage.js");
 script.onload = () => script.remove();
 (document.head || document.documentElement).appendChild(script);
 
+// Send message to background with retry on service worker wake failure.
+async function sendWithRetry(msg: unknown, retries = 2): Promise<unknown> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const resp = await chrome.runtime.sendMessage(msg);
+      if (resp !== undefined) return resp;
+    } catch {
+      if (i < retries) await new Promise(r => setTimeout(r, 300));
+    }
+  }
+  throw new Error("Extension not responding");
+}
+
 // Relay messages from the page to the background.
 window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
@@ -23,16 +36,16 @@ window.addEventListener("message", async (event) => {
 
     switch (method) {
       case "connect":
-        response = await chrome.runtime.sendMessage({ type: "DAPP_CONNECT", origin });
+        response = await sendWithRetry({ type: "DAPP_CONNECT", origin });
         break;
       case "getAccounts":
-        response = await chrome.runtime.sendMessage({ type: "DAPP_GET_ACCOUNTS", origin });
+        response = await sendWithRetry({ type: "DAPP_GET_ACCOUNTS", origin });
         break;
       case "signAndSubmit":
-        response = await chrome.runtime.sendMessage({ type: "DAPP_SIGN_AND_SUBMIT", origin, operation: params });
+        response = await sendWithRetry({ type: "DAPP_SIGN_AND_SUBMIT", origin, operation: params });
         break;
       case "signMessage":
-        response = await chrome.runtime.sendMessage({ type: "DAPP_SIGN_MESSAGE", origin, message: (params as { message: string }).message });
+        response = await sendWithRetry({ type: "DAPP_SIGN_MESSAGE", origin, message: (params as { message: string }).message });
         break;
       default:
         response = { error: `Unknown method: ${method}` };
