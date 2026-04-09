@@ -481,6 +481,16 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
 
     case "DAPP_SIGN_AND_SUBMIT": {
       if (isLocked) return { error: "Wallet is locked" };
+
+      // Clean up any stale pending request.
+      if (pendingDappRequest) {
+        const oldResolver = dappRequestResolvers.get(pendingDappRequest.id);
+        if (oldResolver) oldResolver({ error: "Replaced by new request" });
+        dappRequestResolvers.delete(pendingDappRequest.id);
+        pendingDappRequest = null;
+        closeApprovalWindow();
+      }
+
       const signId = uuid();
       pendingDappRequest = {
         id: signId,
