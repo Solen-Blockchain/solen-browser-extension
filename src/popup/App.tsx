@@ -519,6 +519,7 @@ function ActivityList({ transactions, activeAccountId, explorerUrl }: {
         const isReward = tx.type === "Reward";
         const isStake = tx.type === "Stake" || tx.type === "Unstake";
         const isIntent = tx.type === "Intent";
+        const isBridge = tx.type?.startsWith("Bridge");
 
         return (
           <a
@@ -530,12 +531,13 @@ function ActivityList({ transactions, activeAccountId, explorerUrl }: {
           >
             <div className="flex items-center gap-2">
               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                isIntent ? "bg-cyan-500/10 text-cyan-400"
+                isBridge ? "bg-indigo-500/10 text-indigo-400"
+                  : isIntent ? "bg-cyan-500/10 text-cyan-400"
                   : isReward ? "bg-amber-500/10 text-amber-400"
                   : isStake ? "bg-blue-500/10 text-blue-400"
                   : tx.success ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
               }`}>
-                {isIntent ? "IN" : isReward ? "RW" : isStake ? "ST" : isSent ? "OUT" : "IN"}
+                {isBridge ? "BR" : isIntent ? "IN" : isReward ? "RW" : isStake ? "ST" : isSent ? "OUT" : "IN"}
               </div>
               <div>
                 <div className="text-xs text-gray-300">{tx.type}</div>
@@ -545,11 +547,12 @@ function ActivityList({ transactions, activeAccountId, explorerUrl }: {
             <div className="text-right">
               {tx.amount && (
                 <div className={`text-xs font-medium ${
-                  isStake ? "text-blue-400"
+                  isBridge ? "text-indigo-400"
+                    : isStake ? "text-blue-400"
                     : tx.token_symbol && tx.token_symbol !== "SOLEN" ? "text-indigo-400"
                     : isSent ? "text-gray-300" : "text-emerald-400"
                 }`}>
-                  {isSent && !isStake ? "-" : "+"}{formatBalance(tx.amount)} {tx.token_symbol || "SOLEN"}
+                  {isBridge ? "" : isSent && !isStake ? "-" : "+"}{formatBalance(tx.amount)} {tx.token_symbol || "SOLEN"}
                 </div>
               )}
               {!tx.success && <div className="text-[10px] text-red-400">Failed</div>}

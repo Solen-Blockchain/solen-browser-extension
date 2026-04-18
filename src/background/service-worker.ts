@@ -34,6 +34,8 @@ let lockTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Initialization ────────────────────────────────────────────
 
+let initReady: Promise<void>;
+
 async function init() {
   network = await storage.getNetwork();
   const hasPw = await storage.hasPassword();
@@ -46,7 +48,7 @@ async function init() {
   }
 }
 
-init();
+initReady = init();
 
 // ── Lock timer ────────────────────────────────────────────────
 
@@ -174,11 +176,23 @@ function summarizeTxs() {
     let to: string | null = null;
     let token_symbol: string | null = null;
 
-    if (intentEvt) {
+    // Bridge events
+    const bridgeDepEvt = tx.events.find((e) => e.topic === "bridge_deposit" && e.data.length >= 136);
+    const bridgeRelEvt = tx.events.find((e) => e.topic === "bridge_release" && e.data.length >= 96);
+
+    if (bridgeDepEvt) {
+      type = "Bridge → Base";
+      amount = parseLeU128(bridgeDepEvt.data.slice(104, 136));
+      token_symbol = "SOLEN";
+    } else if (bridgeRelEvt) {
+      type = "Bridge → Solen";
+      amount = parseLeU128(bridgeRelEvt.data.slice(64, 96));
+      token_symbol = "SOLEN";
+    } else if (intentEvt) {
       type = "Intent";
     }
 
-    if (nativeTransferEvt && nativeTransferEvt.data.length >= 96) {
+    if (!bridgeDepEvt && !bridgeRelEvt && nativeTransferEvt && nativeTransferEvt.data.length >= 96) {
       type = intentEvt ? "Intent" : "Transfer";
       to = nativeTransferEvt.data.slice(0, 64);
       amount = parseLeU128(nativeTransferEvt.data.slice(64, 96));
@@ -344,6 +358,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
 
   switch (msg.type) {
     case "GET_STATE": {
+      await initReady; // Wait for storage to finish loading before returning state.
       const hasPw = await storage.hasPassword();
       return { ...getState(), hasPassword: hasPw };
     }
