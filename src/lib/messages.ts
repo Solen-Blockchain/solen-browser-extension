@@ -15,6 +15,7 @@ export type BackgroundRequest =
   | { type: "CREATE_ACCOUNT"; name: string }
   | { type: "IMPORT_ACCOUNT"; name: string; secretKey: string }
   | { type: "REMOVE_ACCOUNT"; accountId: string }
+  | { type: "EXPORT_KEY"; accountId: string }
   | { type: "SET_ACTIVE_ACCOUNT"; accountId: string }
   | { type: "SET_NETWORK"; network: string }
   | { type: "SET_PASSWORD"; password: string }

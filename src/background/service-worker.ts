@@ -412,6 +412,13 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       return { success: true };
     }
 
+    case "EXPORT_KEY": {
+      if (isLocked) return { error: "Wallet is locked" };
+      const account = accounts.find((a) => a.accountId === msg.accountId);
+      if (!account) return { error: "Account not found" };
+      return { success: true, secretKey: account.secretKey };
+    }
+
     case "SET_ACTIVE_ACCOUNT": {
       activeAccountId = msg.accountId;
       await storage.setActiveAccountId(msg.accountId);
