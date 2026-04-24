@@ -416,7 +416,11 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       if (isLocked) return { error: "Wallet is locked" };
       const account = accounts.find((a) => a.accountId === msg.accountId);
       if (!account) return { error: "Account not found" };
-      return { success: true, secretKey: account.secretKey };
+      // `secretKey` is stored as seed[32] || pubkey[32] (libsodium-style
+      // expanded form = 128 hex chars). The private key the user needs is
+      // just the 32-byte seed; `keypairFromSecret` re-derives the pubkey on
+      // import, so round-tripping the sliced value works.
+      return { success: true, secretKey: account.secretKey.slice(0, 64) };
     }
 
     case "SET_ACTIVE_ACCOUNT": {

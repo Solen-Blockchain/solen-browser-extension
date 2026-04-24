@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { WalletState, BackgroundRequest, TokenBalance } from "../lib/messages";
 import { networks, type NetworkId } from "../lib/networks";
 import { formatBalance } from "../lib/wallet";
+import { TokenIcon } from "./TokenIcon";
 
 function send(msg: BackgroundRequest): Promise<any> {
   return chrome.runtime.sendMessage(msg);
@@ -432,11 +433,7 @@ function TokensList({ balance, tokens, onSelect }: {
           className="w-full flex items-center justify-between py-3 px-3 rounded-xl hover:bg-gray-900/50 transition-colors text-left"
         >
           <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold ${
-              token.symbol === "SOLEN" ? "bg-emerald-500/15 text-emerald-400" : "bg-indigo-500/15 text-indigo-400"
-            }`}>
-              {(token.symbol || "??").slice(0, 2)}
-            </div>
+            <TokenIcon contract={token.contract} symbol={token.symbol} />
             <div>
               <div className="text-sm text-gray-200 font-medium">{token.name}</div>
               <div className="text-[10px] text-gray-500">{token.symbol}</div>
@@ -479,10 +476,8 @@ function TokenDetail({ token, net, onBack, onRefresh, network }: {
 
       {/* Balance */}
       <div className="px-4 py-8 text-center">
-        <div className={`w-14 h-14 mx-auto mb-3 rounded-full flex items-center justify-center text-lg font-bold ${
-          token.symbol === "SOLEN" ? "bg-emerald-500/15 text-emerald-400" : "bg-indigo-500/15 text-indigo-400"
-        }`}>
-          {(token.symbol || "??").slice(0, 2)}
+        <div className="mx-auto mb-3 w-14 h-14">
+          <TokenIcon contract={token.contract} symbol={token.symbol} sizeClass="w-14 h-14" textClass="text-lg" />
         </div>
         <p className="text-3xl font-bold text-white mb-1">
           {formatBalance(token.balance)}
