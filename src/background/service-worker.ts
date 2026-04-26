@@ -6,6 +6,14 @@
 import { type WalletAccount, generateKeypair, keypairFromSecret, signMessage, buildSigningMessage, formatBalance, addressToBytes } from "../lib/wallet";
 import { type NetworkId, networks } from "../lib/networks";
 import * as storage from "../lib/storage";
+import {
+  type Keystore,
+  emptyKeystore,
+  hydrateAccounts,
+  dehydrateAccount,
+  highestIndexFor,
+} from "../lib/keystore";
+import { generateMnemonic24, isValidMnemonic, accountFromMnemonic } from "../lib/hd";
 import { getBalance, getAccount, submitOperation, getAccountTxs, getTokenBalances, type IndexedTx, type TokenInfo } from "../lib/rpc";
 import type { BackgroundRequest, WalletState, DappRequest } from "../lib/messages";
 import { hexToBytes, bytesToHex } from "@noble/hashes/utils";
@@ -20,6 +28,9 @@ function uuid(): string {
 }
 
 // In-memory state (cleared on lock).
+// `keystore` is the persisted source of truth; `accounts` is the hydrated
+// view (HD account secret keys are re-derived on unlock and held in memory).
+let keystore: Keystore = emptyKeystore();
 let accounts: WalletAccount[] = [];
 let activeAccountId: string | null = null;
 let network: NetworkId = "testnet";
@@ -42,7 +53,8 @@ async function init() {
   isLocked = hasPw;
 
   if (!hasPw) {
-    accounts = await storage.loadAccounts();
+    keystore = await storage.loadKeystore();
+    accounts = await hydrateAccounts(keystore);
     activeAccountId = (await storage.getActiveAccountId()) || accounts[0]?.accountId || null;
     if (activeAccountId) refreshBalance();
   }
@@ -111,6 +123,7 @@ function closeApprovalWindow() {
 function lock() {
   isLocked = true;
   sessionPassword = null;
+  keystore = emptyKeystore();
   accounts = [];
   balance = null;
   if (lockTimer) { clearTimeout(lockTimer); lockTimer = null; }
@@ -119,13 +132,21 @@ function lock() {
 async function unlock(password: string): Promise<boolean> {
   const valid = await storage.verifyPassword(password);
   if (!valid) return false;
-  accounts = await storage.loadAccounts(password);
+  keystore = await storage.loadKeystore(password);
+  accounts = await hydrateAccounts(keystore);
   activeAccountId = (await storage.getActiveAccountId()) || accounts[0]?.accountId || null;
   sessionPassword = password;
   isLocked = false;
   resetLockTimer();
   if (activeAccountId) refreshBalance();
   return true;
+}
+
+/** Persist a keystore mutation: update in-memory state, save to storage. */
+async function applyKeystore(next: Keystore): Promise<void> {
+  keystore = next;
+  accounts = await hydrateAccounts(keystore);
+  await storage.saveKeystore(keystore, sessionPassword || undefined);
 }
 
 // ── Balance ───────────────────────────────────────────────────
@@ -230,7 +251,13 @@ function getState(): WalletState {
   return {
     isLocked,
     hasPassword: sessionPassword !== null || accounts.length === 0,
-    accounts: accounts.map((a) => ({ name: a.name, accountId: a.accountId, publicKey: a.publicKey })),
+    accounts: accounts.map((a) => ({
+      name: a.name,
+      accountId: a.accountId,
+      publicKey: a.publicKey,
+      ...(a.hd ? { hd: a.hd } : {}),
+    })),
+    mnemonics: keystore.mnemonics.map((m) => ({ id: m.id, label: m.label })),
     activeAccountId,
     network,
     balance,
@@ -378,9 +405,9 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
       };
-      accounts.push(account);
+      const next: Keystore = { ...keystore, accounts: [...keystore.accounts, dehydrateAccount(account)] };
+      await applyKeystore(next);
       if (!activeAccountId) activeAccountId = account.accountId;
-      await storage.saveAccounts(accounts, sessionPassword || undefined);
       await storage.setActiveAccountId(activeAccountId!);
       refreshBalance();
       return { success: true, accountId: account.accountId };
@@ -394,22 +421,114 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
       };
-      accounts.push(account);
+      const next: Keystore = { ...keystore, accounts: [...keystore.accounts, dehydrateAccount(account)] };
+      await applyKeystore(next);
       if (!activeAccountId) activeAccountId = account.accountId;
-      await storage.saveAccounts(accounts, sessionPassword || undefined);
       await storage.setActiveAccountId(activeAccountId!);
       refreshBalance();
       return { success: true, accountId: account.accountId };
     }
 
     case "REMOVE_ACCOUNT": {
-      accounts = accounts.filter((a) => a.accountId !== msg.accountId);
+      const next: Keystore = {
+        ...keystore,
+        accounts: keystore.accounts.filter((a) => a.accountId !== msg.accountId),
+        // Leave orphaned mnemonics in place — they're harmless and let the
+        // user re-derive an accidentally-removed account.
+      };
+      await applyKeystore(next);
       if (activeAccountId === msg.accountId) {
         activeAccountId = accounts[0]?.accountId || null;
       }
-      await storage.saveAccounts(accounts, sessionPassword || undefined);
       refreshBalance();
       return { success: true };
+    }
+
+    case "CREATE_MNEMONIC_ACCOUNT": {
+      if (!(await storage.hasPassword())) {
+        return { error: "Set a password before creating a recovery phrase" };
+      }
+      if (isLocked) return { error: "Wallet is locked" };
+      const mnemonic = generateMnemonic24();
+      const mnemonicId = uuid();
+      const derived = await accountFromMnemonic(mnemonic, 0);
+      const account: WalletAccount = {
+        name: msg.name,
+        accountId: derived.accountId,
+        publicKey: bytesToHex(derived.publicKey),
+        secretKey: bytesToHex(derived.privateSeed) + bytesToHex(derived.publicKey),
+        hd: { mnemonicId, derivationIndex: 0 },
+      };
+      const next: Keystore = {
+        ...keystore,
+        mnemonics: [...keystore.mnemonics, { id: mnemonicId, label: "Default", mnemonic }],
+        accounts: [...keystore.accounts, dehydrateAccount(account)],
+      };
+      await applyKeystore(next);
+      if (!activeAccountId) activeAccountId = account.accountId;
+      await storage.setActiveAccountId(activeAccountId!);
+      refreshBalance();
+      return { success: true, accountId: account.accountId, mnemonic, mnemonicId };
+    }
+
+    case "IMPORT_MNEMONIC_ACCOUNT": {
+      if (!(await storage.hasPassword())) {
+        return { error: "Set a password before importing a recovery phrase" };
+      }
+      if (isLocked) return { error: "Wallet is locked" };
+      const trimmed = msg.mnemonic.trim().toLowerCase().replace(/\s+/g, " ");
+      if (!isValidMnemonic(trimmed)) {
+        return { error: "Invalid recovery phrase (checksum failed)" };
+      }
+      const mnemonicId = uuid();
+      const derived = await accountFromMnemonic(trimmed, 0);
+      const account: WalletAccount = {
+        name: msg.name,
+        accountId: derived.accountId,
+        publicKey: bytesToHex(derived.publicKey),
+        secretKey: bytesToHex(derived.privateSeed) + bytesToHex(derived.publicKey),
+        hd: { mnemonicId, derivationIndex: 0 },
+      };
+      const next: Keystore = {
+        ...keystore,
+        mnemonics: [...keystore.mnemonics, { id: mnemonicId, label: msg.label || "Imported", mnemonic: trimmed }],
+        accounts: [...keystore.accounts, dehydrateAccount(account)],
+      };
+      await applyKeystore(next);
+      if (!activeAccountId) activeAccountId = account.accountId;
+      await storage.setActiveAccountId(activeAccountId!);
+      refreshBalance();
+      return { success: true, accountId: account.accountId };
+    }
+
+    case "ADD_FROM_MNEMONIC": {
+      if (isLocked) return { error: "Wallet is locked" };
+      const mnem = keystore.mnemonics.find((m) => m.id === msg.mnemonicId);
+      if (!mnem) return { error: "Recovery phrase not found" };
+      const nextIndex = highestIndexFor(keystore, msg.mnemonicId) + 1;
+      const derived = await accountFromMnemonic(mnem.mnemonic, nextIndex);
+      const account: WalletAccount = {
+        name: msg.name,
+        accountId: derived.accountId,
+        publicKey: bytesToHex(derived.publicKey),
+        secretKey: bytesToHex(derived.privateSeed) + bytesToHex(derived.publicKey),
+        hd: { mnemonicId: msg.mnemonicId, derivationIndex: nextIndex },
+      };
+      const next: Keystore = { ...keystore, accounts: [...keystore.accounts, dehydrateAccount(account)] };
+      await applyKeystore(next);
+      if (!activeAccountId) activeAccountId = account.accountId;
+      await storage.setActiveAccountId(activeAccountId!);
+      refreshBalance();
+      return { success: true, accountId: account.accountId };
+    }
+
+    case "REVEAL_MNEMONIC": {
+      if (isLocked) return { error: "Wallet is locked" };
+      const valid = await storage.verifyPassword(msg.password);
+      if (!valid) return { error: "Wrong password" };
+      const mnem = keystore.mnemonics.find((m) => m.id === msg.mnemonicId);
+      if (!mnem) return { error: "Recovery phrase not found" };
+      return { success: true, mnemonic: mnem.mnemonic };
     }
 
     case "EXPORT_KEY": {
@@ -438,7 +557,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
     }
 
     case "SET_PASSWORD": {
-      await storage.setPassword(msg.password, accounts);
+      await storage.setPassword(msg.password, keystore);
       sessionPassword = msg.password;
       return { success: true };
     }

@@ -3,8 +3,13 @@ import { sha512 } from "@noble/hashes/sha2";
 import { blake3 } from "@noble/hashes/blake3";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
 
-(ed25519.etc as Record<string, unknown>).sha512Async = async (...m: Uint8Array[]) =>
-  sha512(ed25519.etc.concatBytes(...m));
+// @noble/ed25519 v3 dispatches async hashing through `hashes.sha512Async`
+// (and sync via `hashes.sha512`). Browsers/extensions expose crypto.subtle
+// natively but service workers in MV3 may not always; wire up @noble/hashes
+// fallbacks so signing works in both contexts.
+(ed25519.hashes as Record<string, unknown>).sha512Async = async (msg: Uint8Array) =>
+  sha512(msg);
+(ed25519.hashes as Record<string, unknown>).sha512 = (msg: Uint8Array) => sha512(msg);
 
 // --- Base58 (Bitcoin alphabet) ---
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -69,6 +74,13 @@ export interface WalletAccount {
   accountId: string; // Base58
   publicKey: string;
   secretKey: string;
+  /** If present, this account was derived from a stored mnemonic.
+   *  The secretKey above is re-derived after each unlock; the canonical
+   *  source of truth is `{mnemonicId, derivationIndex}` in the keystore. */
+  hd?: {
+    mnemonicId: string;
+    derivationIndex: number;
+  };
 }
 
 export async function generateKeypair() {

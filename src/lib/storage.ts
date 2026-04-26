@@ -1,14 +1,18 @@
 /**
- * Extension storage wrapper. Uses chrome.storage.local with encryption for keys.
+ * Extension storage wrapper. Uses chrome.storage.local with encryption.
+ *
+ * Persists a v2 Keystore (see ./keystore.ts) — encrypted blob when a password
+ * is set, plaintext otherwise. Old bare-array shapes (from before HD support)
+ * are migrated transparently on load.
  */
 
-import { type WalletAccount } from "./wallet";
+import { type Keystore, emptyKeystore, migrateLegacy } from "./keystore";
 import { type NetworkId, DEFAULT_NETWORK } from "./networks";
 import { encrypt, decrypt, hashPassword } from "./crypto";
 
 const KEYS = {
-  ACCOUNTS_ENCRYPTED: "solen_accounts_enc",
-  ACCOUNTS_PLAIN: "solen_accounts",
+  KEYSTORE_ENCRYPTED: "solen_accounts_enc",
+  KEYSTORE_PLAIN: "solen_accounts",
   PW_HASH: "solen_pw_hash",
   NETWORK: "solen_network",
   LOCK_TIMEOUT: "solen_lock_timeout",
@@ -36,29 +40,44 @@ async function remove(key: string): Promise<void> {
   });
 }
 
-// ── Accounts ──────────────────────────────────────────────────
+// ── Keystore ──────────────────────────────────────────────────
 
-export async function loadAccounts(password?: string): Promise<WalletAccount[]> {
-  // Try encrypted first.
-  const encrypted = await get<string>(KEYS.ACCOUNTS_ENCRYPTED);
+/**
+ * Load the keystore. If `password` is provided and an encrypted blob exists,
+ * decrypts it; otherwise reads the plaintext form. Bare-array (pre-HD) shapes
+ * are migrated transparently. Returns an empty keystore if nothing is stored.
+ */
+export async function loadKeystore(password?: string): Promise<Keystore> {
+  const encrypted = await get<string>(KEYS.KEYSTORE_ENCRYPTED);
   if (encrypted && password) {
     const json = await decrypt(encrypted, password);
-    return JSON.parse(json);
+    const parsed = JSON.parse(json);
+    return migrateLegacy(parsed);
   }
 
-  // Fall back to plaintext.
-  const plain = await get<string>(KEYS.ACCOUNTS_PLAIN);
-  return plain ? JSON.parse(plain) : [];
+  const plain = await get<string>(KEYS.KEYSTORE_PLAIN);
+  if (!plain) return emptyKeystore();
+  try {
+    const parsed = JSON.parse(plain);
+    return migrateLegacy(parsed);
+  } catch {
+    return emptyKeystore();
+  }
 }
 
-export async function saveAccounts(accounts: WalletAccount[], password?: string): Promise<void> {
+/**
+ * Save the keystore. If a password is set AND `password` is provided, writes
+ * the encrypted blob; otherwise writes plaintext (callers should ensure they
+ * don't pass mnemonic-bearing keystores into the plaintext path).
+ */
+export async function saveKeystore(ks: Keystore, password?: string): Promise<void> {
   const pwHash = await get<string>(KEYS.PW_HASH);
   if (pwHash && password) {
-    const enc = await encrypt(JSON.stringify(accounts), password);
-    await set(KEYS.ACCOUNTS_ENCRYPTED, enc);
-    await remove(KEYS.ACCOUNTS_PLAIN);
+    const enc = await encrypt(JSON.stringify(ks), password);
+    await set(KEYS.KEYSTORE_ENCRYPTED, enc);
+    await remove(KEYS.KEYSTORE_PLAIN);
   } else {
-    await set(KEYS.ACCOUNTS_PLAIN, JSON.stringify(accounts));
+    await set(KEYS.KEYSTORE_PLAIN, JSON.stringify(ks));
   }
 }
 
@@ -75,19 +94,24 @@ export async function verifyPassword(password: string): Promise<boolean> {
   return hash === stored;
 }
 
-export async function setPassword(password: string, accounts: WalletAccount[]): Promise<void> {
+export async function setPassword(password: string, ks: Keystore): Promise<void> {
   const hash = await hashPassword(password);
   await set(KEYS.PW_HASH, hash);
-  const enc = await encrypt(JSON.stringify(accounts), password);
-  await set(KEYS.ACCOUNTS_ENCRYPTED, enc);
-  await remove(KEYS.ACCOUNTS_PLAIN);
+  const enc = await encrypt(JSON.stringify(ks), password);
+  await set(KEYS.KEYSTORE_ENCRYPTED, enc);
+  await remove(KEYS.KEYSTORE_PLAIN);
 }
 
-export async function removePassword(password: string, accounts: WalletAccount[]): Promise<void> {
+/**
+ * Remove the password and persist the keystore as plaintext. Caller must
+ * ensure `ks` has no mnemonics — surfacing them as plaintext is a footgun
+ * we refuse at the service-worker boundary.
+ */
+export async function removePassword(password: string, ks: Keystore): Promise<void> {
   if (!(await verifyPassword(password))) throw new Error("Wrong password");
   await remove(KEYS.PW_HASH);
-  await remove(KEYS.ACCOUNTS_ENCRYPTED);
-  await set(KEYS.ACCOUNTS_PLAIN, JSON.stringify(accounts));
+  await remove(KEYS.KEYSTORE_ENCRYPTED);
+  await set(KEYS.KEYSTORE_PLAIN, JSON.stringify(ks));
 }
 
 // ── Network ───────────────────────────────────────────────────
@@ -132,7 +156,7 @@ export async function removeConnectedSite(origin: string): Promise<void> {
 // ── Lock timeout ──────────────────────────────────────────────
 
 export async function getLockTimeout(): Promise<number> {
-  return (await get<number>(KEYS.LOCK_TIMEOUT)) || 600_000; // 10 min default
+  return (await get<number>(KEYS.LOCK_TIMEOUT)) || 600_000;
 }
 
 export async function setLockTimeout(ms: number): Promise<void> {

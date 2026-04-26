@@ -21,6 +21,11 @@ export type BackgroundRequest =
   | { type: "SET_PASSWORD"; password: string }
   | { type: "GET_BALANCE" }
   | { type: "SIGN_AND_SUBMIT"; operation: unknown }
+  // HD wallet (BIP-39 + SLIP-0010)
+  | { type: "CREATE_MNEMONIC_ACCOUNT"; name: string }
+  | { type: "IMPORT_MNEMONIC_ACCOUNT"; name: string; mnemonic: string; label?: string }
+  | { type: "ADD_FROM_MNEMONIC"; name: string; mnemonicId: string }
+  | { type: "REVEAL_MNEMONIC"; password: string; mnemonicId: string }
   // dApp requests (from content script)
   | { type: "DAPP_CONNECT"; origin: string }
   | { type: "DAPP_GET_ACCOUNTS"; origin: string }
@@ -51,7 +56,9 @@ export interface TokenBalance {
 export interface WalletState {
   isLocked: boolean;
   hasPassword: boolean;
-  accounts: { name: string; accountId: string; publicKey: string }[];
+  accounts: { name: string; accountId: string; publicKey: string; hd?: { mnemonicId: string; derivationIndex: number } }[];
+  /** Stored mnemonic metadata (no plaintext words). */
+  mnemonics: { id: string; label: string }[];
   activeAccountId: string | null;
   network: string;
   balance: string | null;

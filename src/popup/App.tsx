@@ -11,6 +11,7 @@ function send(msg: BackgroundRequest): Promise<any> {
 export function App() {
   const [state, setState] = useState<WalletState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     const s = await send({ type: "GET_STATE" });
@@ -44,7 +45,11 @@ export function App() {
     return <LockScreen onDone={refresh} />;
   }
 
-  return <Dashboard state={state} onRefresh={refresh} />;
+  if (showSettings) {
+    return <SettingsView state={state} onBack={() => { setShowSettings(false); refresh(); }} onRefresh={refresh} />;
+  }
+
+  return <Dashboard state={state} onRefresh={refresh} onOpenSettings={() => setShowSettings(true)} />;
 }
 
 // ── Lock Screen ───────────────────────────────────────────────
@@ -162,7 +167,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
 
 // ── Dashboard ─────────────────────────────────────────────────
 
-function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => void }) {
+function Dashboard({ state, onRefresh, onOpenSettings }: { state: WalletState; onRefresh: () => void; onOpenSettings: () => void }) {
   const [showSend, setShowSend] = useState(false);
   const [activeTab, setActiveTab] = useState<"tokens" | "activity">("tokens");
   const [selectedToken, setSelectedToken] = useState<TokenBalance | null>(null);
@@ -274,6 +279,18 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
                     </div>
                     <span className="text-xs text-gray-400">Backup Private Key</span>
                   </button>
+                  <button
+                    onClick={() => { setShowAccountMenu(false); onOpenSettings(); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-800 transition-colors"
+                  >
+                    <div className="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center shrink-0">
+                      <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </div>
+                    <span className="text-xs text-gray-400">Settings</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -349,7 +366,7 @@ function Dashboard({ state, onRefresh }: { state: WalletState; onRefresh: () => 
       {showSend && <SendForm network={state.network as NetworkId} onClose={() => setShowSend(false)} onRefresh={onRefresh} />}
 
       {/* Add Account */}
-      {showAddAccount && <AddAccountPanel onClose={() => setShowAddAccount(false)} onRefresh={onRefresh} />}
+      {showAddAccount && <AddAccountPanel state={state} onClose={() => setShowAddAccount(false)} onRefresh={onRefresh} />}
 
       {/* Tabs */}
       <div className="px-4 flex gap-1 mb-2">
@@ -604,26 +621,134 @@ function ActivityList({ transactions, activeAccountId, explorerUrl }: {
 
 // ── Add Account Panel ────────────────────────────────────────
 
-function AddAccountPanel({ onClose, onRefresh }: { onClose: () => void; onRefresh: () => void }) {
-  const [tab, setTab] = useState<"create" | "import">("create");
+type AddAccountTab = "create" | "import-phrase" | "import-key";
+type CreateStep = "name" | "show";
+
+function AddAccountPanel({
+  state,
+  onClose,
+  onRefresh,
+}: {
+  state: WalletState;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  const [tab, setTab] = useState<AddAccountTab>("create");
   const [name, setName] = useState("");
-  const [secretKey, setSecretKey] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Create flow
+  const [createStep, setCreateStep] = useState<CreateStep>("name");
+  const [generatedMnemonic, setGeneratedMnemonic] = useState<string>("");
+  const [backedUp, setBackedUp] = useState(false);
+  const [useExistingMnemonicId, setUseExistingMnemonicId] = useState<string>("");
+
+  // Import phrase
+  const [importPhrase, setImportPhrase] = useState("");
+
+  // Import key (legacy)
+  const [secretKey, setSecretKey] = useState("");
+
+  const hasPassword = state.hasPassword && state.accounts.length > 0;
 
   const handleCreate = async () => {
+    setError("");
     if (!name.trim()) { setError("Enter a name"); return; }
-    await send({ type: "CREATE_ACCOUNT", name: name.trim() });
+    if (useExistingMnemonicId) {
+      setBusy(true);
+      const res = await send({ type: "ADD_FROM_MNEMONIC", name: name.trim(), mnemonicId: useExistingMnemonicId });
+      setBusy(false);
+      if (res?.error) { setError(res.error); return; }
+      onRefresh();
+      onClose();
+      return;
+    }
+    if (!hasPassword) {
+      setError("Set a password in Settings first");
+      return;
+    }
+    setBusy(true);
+    const res = await send({ type: "CREATE_MNEMONIC_ACCOUNT", name: name.trim() });
+    setBusy(false);
+    if (res?.error) { setError(res.error); return; }
+    setGeneratedMnemonic(res.mnemonic);
+    setCreateStep("show");
+    onRefresh();
+  };
+
+  const handleImportPhrase = async () => {
+    setError("");
+    if (!name.trim()) { setError("Enter a name"); return; }
+    if (!hasPassword) { setError("Set a password in Settings first"); return; }
+    setBusy(true);
+    const res = await send({ type: "IMPORT_MNEMONIC_ACCOUNT", name: name.trim(), mnemonic: importPhrase });
+    setBusy(false);
+    if (res?.error) { setError(res.error); return; }
     onRefresh();
     onClose();
   };
 
-  const handleImport = async () => {
+  const handleImportKey = async () => {
+    setError("");
     if (!name.trim()) { setError("Enter a name"); return; }
     if (!secretKey.trim() || secretKey.trim().length < 64) { setError("Enter a valid secret key (64 hex chars)"); return; }
+    setBusy(true);
     await send({ type: "IMPORT_ACCOUNT", name: name.trim(), secretKey: secretKey.trim() });
+    setBusy(false);
     onRefresh();
     onClose();
   };
+
+  const handleLegacyCreate = async () => {
+    setError("");
+    if (!name.trim()) { setError("Enter a name"); return; }
+    setBusy(true);
+    await send({ type: "CREATE_ACCOUNT", name: name.trim() });
+    setBusy(false);
+    onRefresh();
+    onClose();
+  };
+
+  if (createStep === "show") {
+    return (
+      <div className="px-4 pb-3">
+        <div className="bg-gray-900 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-gray-300">Recovery Phrase</span>
+          </div>
+          <div className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+            Write these 24 words down on paper, in order. Anyone with this phrase can spend your funds.
+          </div>
+          <div className="bg-gray-950 border border-gray-700 rounded-lg p-2.5 grid grid-cols-3 gap-1.5 text-[10px] font-mono">
+            {generatedMnemonic.split(" ").map((word, i) => (
+              <div key={i} className="flex items-baseline gap-1">
+                <span className="text-gray-600 w-4 text-right">{i + 1}.</span>
+                <span className="text-gray-200 truncate">{word}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => navigator.clipboard.writeText(generatedMnemonic)}
+            className="w-full text-[10px] text-gray-400 hover:text-gray-200"
+          >
+            Copy to clipboard
+          </button>
+          <label className="flex items-start gap-2 text-[11px] text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={backedUp} onChange={(e) => setBackedUp(e.target.checked)} className="mt-0.5" />
+            <span>I've written down my recovery phrase.</span>
+          </label>
+          <button
+            onClick={() => { onRefresh(); onClose(); }}
+            disabled={!backedUp}
+            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg text-xs"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 pb-3">
@@ -634,11 +759,14 @@ function AddAccountPanel({ onClose, onRefresh }: { onClose: () => void; onRefres
         </div>
 
         <div className="flex gap-1 bg-gray-950 rounded-lg p-1">
-          <button onClick={() => setTab("create")} className={`flex-1 py-1.5 text-xs rounded-md font-medium ${tab === "create" ? "bg-gray-700 text-white" : "text-gray-400"}`}>
-            Create New
+          <button onClick={() => { setTab("create"); setError(""); }} className={`flex-1 py-1.5 text-[10px] rounded-md font-medium ${tab === "create" ? "bg-gray-700 text-white" : "text-gray-400"}`}>
+            Create
           </button>
-          <button onClick={() => setTab("import")} className={`flex-1 py-1.5 text-xs rounded-md font-medium ${tab === "import" ? "bg-gray-700 text-white" : "text-gray-400"}`}>
-            Import
+          <button onClick={() => { setTab("import-phrase"); setError(""); }} className={`flex-1 py-1.5 text-[10px] rounded-md font-medium ${tab === "import-phrase" ? "bg-gray-700 text-white" : "text-gray-400"}`}>
+            Phrase
+          </button>
+          <button onClick={() => { setTab("import-key"); setError(""); }} className={`flex-1 py-1.5 text-[10px] rounded-md font-medium ${tab === "import-key" ? "bg-gray-700 text-white" : "text-gray-400"}`}>
+            Key
           </button>
         </div>
 
@@ -651,7 +779,43 @@ function AddAccountPanel({ onClose, onRefresh }: { onClose: () => void; onRefres
           className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-500/50"
         />
 
-        {tab === "import" && (
+        {tab === "create" && state.mnemonics && state.mnemonics.length > 0 && (
+          <select
+            value={useExistingMnemonicId}
+            onChange={(e) => setUseExistingMnemonicId(e.target.value)}
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500/50"
+          >
+            <option value="">New recovery phrase</option>
+            {state.mnemonics.map((m) => (
+              <option key={m.id} value={m.id}>Next account from "{m.label}"</option>
+            ))}
+          </select>
+        )}
+
+        {tab === "create" && !hasPassword && !useExistingMnemonicId && (
+          <div className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+            A wallet password is required to create a recovery phrase. Open Settings, or use Key tab.
+          </div>
+        )}
+
+        {tab === "import-phrase" && (
+          <>
+            <textarea
+              value={importPhrase}
+              onChange={(e) => { setImportPhrase(e.target.value); setError(""); }}
+              placeholder="Paste 12 or 24 word recovery phrase"
+              rows={3}
+              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-500/50 font-mono resize-none"
+            />
+            {!hasPassword && (
+              <div className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+                A wallet password is required. Set one in Settings first.
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "import-key" && (
           <textarea
             value={secretKey}
             onChange={(e) => { setSecretKey(e.target.value); setError(""); }}
@@ -664,11 +828,208 @@ function AddAccountPanel({ onClose, onRefresh }: { onClose: () => void; onRefres
         {error && <p className="text-red-400 text-[10px]">{error}</p>}
 
         <button
-          onClick={tab === "create" ? handleCreate : handleImport}
-          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 rounded-lg transition-colors text-xs"
+          onClick={
+            tab === "create" ? handleCreate :
+            tab === "import-phrase" ? handleImportPhrase :
+            handleImportKey
+          }
+          disabled={busy}
+          className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition-colors text-xs"
         >
-          {tab === "create" ? "Create Account" : "Import Account"}
+          {busy ? "Working…" :
+            tab === "create" ? (useExistingMnemonicId ? "Derive Next Account" : "Generate Recovery Phrase") :
+            tab === "import-phrase" ? "Import Account" :
+            "Import Account"}
         </button>
+
+        {tab === "create" && !useExistingMnemonicId && (
+          <button
+            onClick={handleLegacyCreate}
+            disabled={busy}
+            className="w-full text-[10px] text-gray-500 hover:text-gray-300"
+          >
+            Or create a one-off random account
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Settings View ────────────────────────────────────────────
+
+function SettingsView({ state, onBack, onRefresh }: { state: WalletState; onBack: () => void; onRefresh: () => void }) {
+  const [showSetPw, setShowSetPw] = useState(false);
+  const [pw, setPw] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [pwSuccess, setPwSuccess] = useState("");
+
+  const [revealId, setRevealId] = useState<string | null>(null);
+  const [revealPw, setRevealPw] = useState("");
+  const [revealError, setRevealError] = useState("");
+  const [revealedWords, setRevealedWords] = useState<string | null>(null);
+
+  const hasRealPassword = state.hasPassword && state.accounts.length > 0;
+  // hasPassword in state is true when no accounts exist OR when password is set;
+  // we want to show "Set Password" only when truly no password is set AND there's
+  // something to protect. Approximate: if accounts exist and !hasPassword, show
+  // Set Password; if no accounts, show "Set up password before adding HD account".
+
+  const handleSetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwError("");
+    if (pw.length < 6) { setPwError("Password must be at least 6 characters"); return; }
+    if (pw !== pwConfirm) { setPwError("Passwords don't match"); return; }
+    await send({ type: "SET_PASSWORD", password: pw });
+    setShowSetPw(false);
+    setPw("");
+    setPwConfirm("");
+    setPwSuccess("Password set");
+    setTimeout(() => setPwSuccess(""), 3000);
+    onRefresh();
+  };
+
+  const startReveal = (id: string) => {
+    setRevealId(id);
+    setRevealPw("");
+    setRevealError("");
+    setRevealedWords(null);
+  };
+
+  const cancelReveal = () => {
+    setRevealId(null);
+    setRevealPw("");
+    setRevealError("");
+    setRevealedWords(null);
+  };
+
+  const submitReveal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRevealError("");
+    if (!revealId) return;
+    const res = await send({ type: "REVEAL_MNEMONIC", password: revealPw, mnemonicId: revealId });
+    if (res?.error) { setRevealError(res.error); return; }
+    setRevealedWords(res.mnemonic);
+    setRevealPw("");
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-2">
+        <button onClick={onBack} className="p-1 text-gray-400 hover:text-gray-200">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <h2 className="text-sm font-semibold text-gray-200">Settings</h2>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {/* Password */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wide mb-2">Security</h3>
+          <div className="bg-gray-900 rounded-xl p-3 space-y-2">
+            <div className="text-xs text-gray-400">
+              Status: {hasRealPassword ? <span className="text-emerald-400">Password set</span> : <span className="text-amber-400">No password</span>}
+            </div>
+            {!hasRealPassword && !showSetPw && (
+              <button
+                onClick={() => { setShowSetPw(true); setPwError(""); }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg"
+              >
+                Set Password
+              </button>
+            )}
+            {showSetPw && (
+              <form onSubmit={handleSetPassword} className="space-y-2 mt-2">
+                <input
+                  type="password"
+                  value={pw}
+                  onChange={(e) => setPw(e.target.value)}
+                  placeholder="New password (min 6 chars)"
+                  autoFocus
+                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500/50"
+                />
+                <input
+                  type="password"
+                  value={pwConfirm}
+                  onChange={(e) => setPwConfirm(e.target.value)}
+                  placeholder="Confirm password"
+                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-emerald-500/50"
+                />
+                {pwError && <p className="text-red-400 text-[10px]">{pwError}</p>}
+                <div className="flex gap-2">
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg">Set</button>
+                  <button type="button" onClick={() => { setShowSetPw(false); setPwError(""); }} className="text-gray-400 text-xs px-3 py-1.5">Cancel</button>
+                </div>
+              </form>
+            )}
+            {pwSuccess && <p className="text-emerald-400 text-[10px]">{pwSuccess}</p>}
+          </div>
+        </section>
+
+        {/* Recovery phrases */}
+        {state.mnemonics && state.mnemonics.length > 0 && (
+          <section>
+            <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wide mb-2">Recovery Phrases</h3>
+            <div className="space-y-2">
+              {state.mnemonics.map((m) => {
+                const isActive = revealId === m.id;
+                return (
+                  <div key={m.id} className="bg-gray-900 rounded-xl p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-medium text-gray-200">{m.label}</div>
+                        <div className="text-[10px] text-gray-500 font-mono">{m.id.slice(0, 8)}…</div>
+                      </div>
+                      {!isActive ? (
+                        <button onClick={() => startReveal(m.id)} className="text-[10px] bg-gray-800 hover:bg-gray-700 text-gray-300 px-2.5 py-1 rounded">Reveal</button>
+                      ) : (
+                        <button onClick={cancelReveal} className="text-[10px] text-gray-500 hover:text-gray-300 px-2.5 py-1">{revealedWords ? "Hide" : "Cancel"}</button>
+                      )}
+                    </div>
+                    {isActive && !revealedWords && (
+                      <form onSubmit={submitReveal} className="mt-2 space-y-2">
+                        <input
+                          type="password"
+                          value={revealPw}
+                          onChange={(e) => setRevealPw(e.target.value)}
+                          placeholder="Wallet password"
+                          autoFocus
+                          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-emerald-500/50"
+                        />
+                        {revealError && <p className="text-red-400 text-[10px]">{revealError}</p>}
+                        <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-medium px-3 py-1.5 rounded-lg">Show</button>
+                      </form>
+                    )}
+                    {isActive && revealedWords && (
+                      <div className="mt-2 space-y-2">
+                        <div className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+                          Don't share, screenshot, or paste online.
+                        </div>
+                        <div className="bg-gray-950 border border-gray-700 rounded-lg p-2 grid grid-cols-3 gap-1 text-[10px] font-mono">
+                          {revealedWords.split(" ").map((w, i) => (
+                            <div key={i} className="flex items-baseline gap-1">
+                              <span className="text-gray-600 w-4 text-right">{i + 1}.</span>
+                              <span className="text-gray-200 truncate">{w}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(revealedWords)}
+                          className="w-full text-[10px] text-gray-400 hover:text-gray-200"
+                        >
+                          Copy to clipboard
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
