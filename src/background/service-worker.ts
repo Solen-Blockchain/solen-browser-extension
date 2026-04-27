@@ -56,7 +56,35 @@ async function init() {
     keystore = await storage.loadKeystore();
     accounts = await hydrateAccounts(keystore);
     activeAccountId = (await storage.getActiveAccountId()) || accounts[0]?.accountId || null;
-    if (activeAccountId) refreshBalance();
+    if (activeAccountId) {
+      await hydrateSnapshot();
+      refreshBalance();
+    }
+  }
+}
+
+/**
+ * Load the last-known balance/tokens/transactions for the active account
+ * from disk into in-memory state. Called on cold start, unlock, and when
+ * the user switches account or network — so the popup paints cached values
+ * instantly instead of zeros while the next RPC fetch is in flight.
+ */
+async function hydrateSnapshot(): Promise<void> {
+  if (!activeAccountId) {
+    balance = null;
+    tokens = [];
+    transactions = [];
+    return;
+  }
+  const snap = await storage.getAccountSnapshot(network, activeAccountId);
+  if (snap) {
+    balance = snap.balance;
+    tokens = snap.tokens;
+    transactions = snap.transactions;
+  } else {
+    balance = null;
+    tokens = [];
+    transactions = [];
   }
 }
 
@@ -138,7 +166,10 @@ async function unlock(password: string): Promise<boolean> {
   sessionPassword = password;
   isLocked = false;
   resetLockTimer();
-  if (activeAccountId) refreshBalance();
+  if (activeAccountId) {
+    await hydrateSnapshot();
+    refreshBalance();
+  }
   return true;
 }
 
@@ -153,17 +184,32 @@ async function applyKeystore(next: Keystore): Promise<void> {
 
 async function refreshBalance() {
   if (!activeAccountId) { balance = null; tokens = []; transactions = []; return; }
+  // Capture the (network, account) the fetch is for. If the user switches
+  // mid-flight, we still want to write the result to the right cache slot
+  // and avoid clobbering the in-memory state for the new selection.
+  const accountAtStart = activeAccountId;
+  const networkAtStart = network;
   try {
     const [bal, toks, txs] = await Promise.all([
-      getBalance(network, activeAccountId),
-      getTokenBalances(network, activeAccountId),
-      getAccountTxs(network, activeAccountId, 10),
+      getBalance(networkAtStart, accountAtStart),
+      getTokenBalances(networkAtStart, accountAtStart),
+      getAccountTxs(networkAtStart, accountAtStart, 10),
     ]);
-    balance = bal;
-    tokens = toks;
-    transactions = txs;
+    if (accountAtStart === activeAccountId && networkAtStart === network) {
+      balance = bal;
+      tokens = toks;
+      transactions = txs;
+    }
+    await storage.setAccountSnapshot(networkAtStart, accountAtStart, {
+      balance: bal,
+      tokens: toks,
+      transactions: txs,
+      updatedAt: Date.now(),
+    });
   } catch {
-    balance = null;
+    if (accountAtStart === activeAccountId && networkAtStart === network) {
+      balance = null;
+    }
   }
 }
 
@@ -545,6 +591,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
     case "SET_ACTIVE_ACCOUNT": {
       activeAccountId = msg.accountId;
       await storage.setActiveAccountId(msg.accountId);
+      await hydrateSnapshot();
       refreshBalance();
       return { success: true };
     }
@@ -552,6 +599,7 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
     case "SET_NETWORK": {
       network = msg.network as NetworkId;
       await storage.setNetwork(network);
+      await hydrateSnapshot();
       refreshBalance();
       return { success: true };
     }

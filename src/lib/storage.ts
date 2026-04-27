@@ -9,6 +9,7 @@
 import { type Keystore, emptyKeystore, migrateLegacy } from "./keystore";
 import { type NetworkId, DEFAULT_NETWORK } from "./networks";
 import { encrypt, decrypt, hashPassword } from "./crypto";
+import type { TokenInfo, IndexedTx } from "./rpc";
 
 const KEYS = {
   KEYSTORE_ENCRYPTED: "solen_accounts_enc",
@@ -18,6 +19,7 @@ const KEYS = {
   LOCK_TIMEOUT: "solen_lock_timeout",
   CONNECTED_SITES: "solen_connected_sites",
   ACTIVE_ACCOUNT: "solen_active_account",
+  ACCOUNT_CACHE_PREFIX: "solen_account_cache_",
 };
 
 async function get<T>(key: string): Promise<T | null> {
@@ -151,6 +153,38 @@ export async function addConnectedSite(origin: string): Promise<void> {
 export async function removeConnectedSite(origin: string): Promise<void> {
   const sites = await getConnectedSites();
   await set(KEYS.CONNECTED_SITES, sites.filter((s) => s !== origin));
+}
+
+// ── Account snapshot cache ────────────────────────────────────
+//
+// Last-known balance/tokens/transactions for a given (network, account),
+// persisted to chrome.storage so the popup can paint immediately on cold
+// service-worker starts instead of flashing a zero balance while RPC loads.
+
+export interface AccountSnapshot {
+  balance: string | null;
+  tokens: TokenInfo[];
+  transactions: IndexedTx[];
+  updatedAt: number;
+}
+
+function snapshotKey(network: NetworkId, accountId: string): string {
+  return `${KEYS.ACCOUNT_CACHE_PREFIX}${network}_${accountId}`;
+}
+
+export async function getAccountSnapshot(
+  network: NetworkId,
+  accountId: string,
+): Promise<AccountSnapshot | null> {
+  return get<AccountSnapshot>(snapshotKey(network, accountId));
+}
+
+export async function setAccountSnapshot(
+  network: NetworkId,
+  accountId: string,
+  snap: AccountSnapshot,
+): Promise<void> {
+  await set(snapshotKey(network, accountId), snap);
 }
 
 // ── Lock timeout ──────────────────────────────────────────────
