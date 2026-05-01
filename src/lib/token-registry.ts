@@ -12,6 +12,9 @@ export const KNOWN_TOKENS: Record<string, string> = {
   // Solen Ape Coin (SOLENAPE) — launchpad token #1, graduated 2026-04-24.
   "dc9259e08616e564edf482a1dd11972e6d0e8636cfd1e04f0fb9075b7063d6b6":
     "ipfs://QmXioqtS3F8S6zd6JMoQBx9uKYYCcaMhL96dP1u1iPsSbf",
+  // stSOLEN — liquid-staking derivative, deployed mainnet 2026-05-01.
+  "bee37513c713e55113115dda2ae41d1ddd67802d99610708ec289130c1c8edc5":
+    "stsolen-logo.png",
 };
 
 const GATEWAY = "https://gateway.pinata.cloud/ipfs/";

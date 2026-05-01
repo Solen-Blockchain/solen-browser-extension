@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback } from "react";
 import type { WalletState, BackgroundRequest, TokenBalance } from "../lib/messages";
 import { networks, type NetworkId } from "../lib/networks";
 import { formatBalance } from "../lib/wallet";
+import {
+  backingValue,
+  formatBaseUnits,
+  isStsolenContract,
+  openStakeDapp,
+  readCachedExchangeRate,
+} from "../lib/stsolen";
 import { TokenIcon } from "./TokenIcon";
 
 function send(msg: BackgroundRequest): Promise<any> {
@@ -196,6 +203,7 @@ function Dashboard({ state, onRefresh, onOpenSettings }: { state: WalletState; o
         onBack={() => setSelectedToken(null)}
         onRefresh={onRefresh}
         network={state.network as NetworkId}
+        activeAccountId={state.activeAccountId}
       />
     );
   }
@@ -394,6 +402,8 @@ function Dashboard({ state, onRefresh, onOpenSettings }: { state: WalletState; o
           <TokensList
             balance={state.balance}
             tokens={Array.isArray(state.tokens) ? state.tokens : []}
+            network={state.network as NetworkId}
+            activeAccountId={state.activeAccountId}
             onSelect={setSelectedToken}
           />
         ) : (
@@ -426,9 +436,11 @@ function Dashboard({ state, onRefresh, onOpenSettings }: { state: WalletState; o
 
 // ── Tokens List ──────────────────────────────────────────────
 
-function TokensList({ balance, tokens, onSelect }: {
+function TokensList({ balance, tokens, network, activeAccountId, onSelect }: {
   balance: string | null;
   tokens: TokenBalance[];
+  network: NetworkId;
+  activeAccountId: string | null;
   onSelect: (t: TokenBalance) => void;
 }) {
   const solenToken: TokenBalance = {
@@ -441,42 +453,94 @@ function TokensList({ balance, tokens, onSelect }: {
 
   const allTokens = [solenToken, ...tokens];
 
+  // Fetch the stSOLEN exchange rate once if any row is stSOLEN — used to
+  // render the "≈ N.NN SOLEN" backing pill.
+  const hasStsolen = allTokens.some((t) => isStsolenContract(t.contract, network));
+  const [stsolenRate, setStsolenRate] = useState<{ pool: bigint; supply: bigint } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!hasStsolen) return;
+    (async () => {
+      const r = await readCachedExchangeRate(network);
+      if (!cancelled) setStsolenRate(r);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasStsolen, network]);
+
   return (
     <div className="space-y-1">
-      {allTokens.map((token) => (
-        <button
-          key={token.contract}
-          onClick={() => onSelect(token)}
-          className="w-full flex items-center justify-between py-3 px-3 rounded-xl hover:bg-gray-900/50 transition-colors text-left"
-        >
-          <div className="flex items-center gap-3">
-            <TokenIcon contract={token.contract} symbol={token.symbol} />
-            <div>
-              <div className="text-sm text-gray-200 font-medium">{token.name}</div>
-              <div className="text-[10px] text-gray-500">{token.symbol}</div>
+      {allTokens.map((token) => {
+        const isStsolen = isStsolenContract(token.contract, network);
+        const backingDisplay =
+          isStsolen && stsolenRate
+            ? formatBaseUnits(
+                backingValue(BigInt(token.balance || "0"), stsolenRate),
+              )
+            : null;
+
+        return (
+          <div
+            key={token.contract}
+            className="w-full flex items-center justify-between py-3 px-3 rounded-xl hover:bg-gray-900/50 transition-colors text-left"
+          >
+            <button
+              onClick={() => onSelect(token)}
+              className="flex items-center gap-3 flex-1 min-w-0 text-left"
+            >
+              <TokenIcon contract={token.contract} symbol={token.symbol} />
+              <div className="min-w-0">
+                <div className="text-sm text-gray-200 font-medium">
+                  {token.name}
+                </div>
+                <div className="text-[10px] text-gray-500">{token.symbol}</div>
+              </div>
+            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="text-right">
+                <div className="text-sm text-gray-200 font-medium tabular-nums">
+                  {formatBalance(token.balance)}
+                </div>
+                {backingDisplay !== null && (
+                  <div className="text-[10px] text-amber-400/80 tabular-nums">
+                    ≈ {backingDisplay} SOLEN
+                  </div>
+                )}
+              </div>
+              {isStsolen && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openStakeDapp(activeAccountId ?? undefined);
+                  }}
+                  title="Open the staking dapp"
+                  className="rounded-md border border-amber-500/40 px-2 py-1 text-[10px] font-medium text-amber-300 hover:bg-amber-500/10"
+                >
+                  Stake
+                </button>
+              )}
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-sm text-gray-200 font-medium">
-              {formatBalance(token.balance)}
-            </div>
-          </div>
-        </button>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 // ── Token Detail ─────────────────────────────────────────────
 
-function TokenDetail({ token, net, onBack, onRefresh, network }: {
+function TokenDetail({ token, net, onBack, onRefresh, network, activeAccountId }: {
   token: TokenBalance;
   net: { name: string; color: string; explorerUrl: string };
   onBack: () => void;
   onRefresh: () => void;
   network: NetworkId;
+  activeAccountId: string | null;
 }) {
   const [showSend, setShowSend] = useState(false);
+  const isStsolen = isStsolenContract(token.contract, network);
 
   return (
     <div className="flex flex-col h-full">
@@ -522,6 +586,18 @@ function TokenDetail({ token, net, onBack, onRefresh, network }: {
           </svg>
           Receive
         </button>
+        {isStsolen && (
+          <button
+            onClick={() => openStakeDapp(activeAccountId ?? undefined)}
+            title="Open the staking dapp"
+            className="flex-1 flex flex-col items-center gap-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs font-medium py-3 rounded-xl transition-colors"
+          >
+            <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+            Stake
+          </button>
+        )}
       </div>
 
       {showSend && <SendForm network={network} onClose={() => setShowSend(false)} onRefresh={onRefresh} />}
