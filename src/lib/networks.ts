@@ -20,7 +20,7 @@ export const networks: Record<NetworkId, NetworkConfig> = {
     explorerUrl: "https://solenscan.io",
     color: "#10b981",
     stsolenAddress:
-      "bee37513c713e55113115dda2ae41d1ddd67802d99610708ec289130c1c8edc5",
+      "42c227f9bd58acda8a08f1d274ba61603f08cf8f194fbdd96ad10ceb943c246b",
   },
   testnet: {
     id: "testnet",

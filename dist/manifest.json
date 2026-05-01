@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Solen Wallet",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Browser wallet for the Solen blockchain. Send, receive, stake, and interact with dApps.",
   "permissions": ["storage", "activeTab"],
   "action": {
