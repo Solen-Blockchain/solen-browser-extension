@@ -15,7 +15,7 @@ import {
 } from "../lib/keystore";
 import { generateMnemonic24, isValidMnemonic, accountFromMnemonic } from "../lib/hd";
 import { getBalance, getAccount, submitOperation, getAccountTxs, getTokenBalances, type IndexedTx, type TokenInfo } from "../lib/rpc";
-import type { BackgroundRequest, WalletState, DappRequest } from "../lib/messages";
+import type { BackgroundRequest, WalletState, DappRequest, GrantAgentRequest, RevokeAgentRequest } from "../lib/messages";
 import { hexToBytes, bytesToHex } from "@noble/hashes/utils";
 
 function uuid(): string {
@@ -419,6 +419,69 @@ async function buildSignAndSubmit(
   return submitOperation(network, operation);
 }
 
+/**
+ * Compose, sign, and submit a SetAuth op that grants or revokes an agent
+ * session key. Reads the account's CURRENT auth methods from the node so the
+ * SetAuth (which replaces the whole list) never clobbers the owner's own method
+ * or other agents. The new Session method mirrors the on-chain field order.
+ */
+async function buildGrantRevoke(
+  account: WalletAccount,
+  req: GrantAgentRequest | RevokeAgentRequest,
+  kind: "grant" | "revoke",
+): Promise<unknown> {
+  const info = await getAccount(network, account.accountId);
+  const senderBytes = Array.from(addressToBytes(account.accountId));
+  const chainId = networks[network].chainId;
+
+  const current = (info.auth_methods ?? []) as Array<Record<string, unknown>>;
+  if (current.length === 0) {
+    throw new Error("account has no on-chain auth methods — cannot modify safely");
+  }
+
+  const agentKeyHex = bytesToHex(addressToBytes(req.agentPublicKey));
+  const isThisAgent = (m: Record<string, unknown>): boolean => {
+    const s = m.Session as { session_key?: number[] } | undefined;
+    return !!s?.session_key && bytesToHex(Uint8Array.from(s.session_key)) === agentKeyHex;
+  };
+
+  // Drop any existing session for this key (grant replaces it; revoke removes it).
+  const newMethods = current.filter((m) => !isThisAgent(m));
+
+  if (kind === "grant") {
+    const g = (req as GrantAgentRequest).grant ?? {};
+    newMethods.push({
+      Session: {
+        session_key: Array.from(addressToBytes(req.agentPublicKey)),
+        expires_at: g.expiresAt ?? Number.MAX_SAFE_INTEGER,
+        spending_limit: parseInt(g.spendingLimit ?? "0", 10),
+        budget_total: parseInt(g.budgetTotal ?? "0", 10),
+        allowed_targets: (g.allowedTargets ?? []).map((t) => Array.from(addressToBytes(t))),
+        allowed_methods: g.allowedMethods ?? [],
+        restrict_subcalls: g.restrictSubcalls ?? false,
+      },
+    });
+  } else if (newMethods.length === current.length) {
+    throw new Error("no matching agent session key to revoke");
+  }
+
+  if (newMethods.length === 0) {
+    throw new Error("refusing to submit a SetAuth that removes all auth methods");
+  }
+
+  const rustActions = [{ SetAuth: { auth_methods: newMethods } }];
+  const sigMsg = buildSigningMessage(senderBytes, info.nonce, 100000, rustActions, chainId);
+  const signature = await signMessage(account.secretKey, sigMsg);
+  const operation = {
+    sender: senderBytes,
+    nonce: info.nonce,
+    actions: rustActions,
+    max_fee: 100000,
+    signature: hexToByteArray(signature),
+  };
+  return submitOperation(network, operation);
+}
+
 // ── Message handler ───────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg: BackgroundRequest, sender, sendResponse) => {
@@ -706,6 +769,40 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
       });
     }
 
+    case "DAPP_GRANT_AGENT":
+    case "DAPP_REVOKE_AGENT": {
+      if (isLocked) return { error: "Wallet is locked" };
+
+      if (pendingDappRequest) {
+        const oldResolver = dappRequestResolvers.get(pendingDappRequest.id);
+        if (oldResolver) oldResolver({ error: "Replaced by new request" });
+        dappRequestResolvers.delete(pendingDappRequest.id);
+        pendingDappRequest = null;
+        closeApprovalWindow();
+      }
+
+      const grantId = uuid();
+      pendingDappRequest = {
+        id: grantId,
+        origin: msg.origin,
+        type: msg.type === "DAPP_GRANT_AGENT" ? "grant" : "revoke",
+        data: msg.request,
+      };
+      setBadge("!");
+      openApprovalWindow();
+      return new Promise((resolve) => {
+        dappRequestResolvers.set(grantId, resolve);
+        setTimeout(() => {
+          if (dappRequestResolvers.has(grantId)) {
+            dappRequestResolvers.delete(grantId);
+            if (pendingDappRequest?.id === grantId) pendingDappRequest = null;
+            setBadge("");
+            resolve({ error: "Request timed out" });
+          }
+        }, 120_000);
+      });
+    }
+
     case "APPROVE_DAPP_REQUEST": {
       if (!pendingDappRequest || pendingDappRequest.id !== msg.requestId) {
         return { error: "No matching request" };
@@ -729,6 +826,21 @@ async function handleMessage(msg: BackgroundRequest, sender: chrome.runtime.Mess
             result = await buildSignAndSubmit(account, req.data as TxParams);
           } catch (e) {
             result = { error: e instanceof Error ? e.message : "Submit failed" };
+          }
+        }
+      } else if (req.type === "grant" || req.type === "revoke") {
+        const account = accounts.find((a) => a.accountId === activeAccountId);
+        if (!account) {
+          result = { error: "No active account" };
+        } else {
+          try {
+            result = await buildGrantRevoke(
+              account,
+              req.data as GrantAgentRequest | RevokeAgentRequest,
+              req.type,
+            );
+          } catch (e) {
+            result = { error: e instanceof Error ? e.message : "Grant failed" };
           }
         }
       } else {

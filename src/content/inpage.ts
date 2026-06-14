@@ -8,6 +8,8 @@ interface SolenProvider {
   getAccounts(): Promise<string[]>;
   signAndSubmit(operation: unknown): Promise<unknown>;
   signMessage(message: string): Promise<{ signature: string }>;
+  grantAgent(request: unknown): Promise<unknown>;
+  revokeAgent(request: unknown): Promise<unknown>;
   isConnected(): boolean;
   on(event: string, handler: (...args: unknown[]) => void): void;
 }
@@ -81,6 +83,14 @@ const solen: SolenProvider = {
 
   async signMessage(message: string) {
     return request("signMessage", { message }) as Promise<{ signature: string }>;
+  },
+
+  async grantAgent(request_: unknown) {
+    return request("grantAgent", request_);
+  },
+
+  async revokeAgent(request_: unknown) {
+    return request("revokeAgent", request_);
   },
 
   isConnected() {

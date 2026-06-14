@@ -47,6 +47,12 @@ window.addEventListener("message", async (event) => {
       case "signMessage":
         response = await sendWithRetry({ type: "DAPP_SIGN_MESSAGE", origin, message: (params as { message: string }).message });
         break;
+      case "grantAgent":
+        response = await sendWithRetry({ type: "DAPP_GRANT_AGENT", origin, request: params });
+        break;
+      case "revokeAgent":
+        response = await sendWithRetry({ type: "DAPP_REVOKE_AGENT", origin, request: params });
+        break;
       default:
         response = { error: `Unknown method: ${method}` };
     }

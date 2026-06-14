@@ -28,9 +28,15 @@ export function getBalance(network: NetworkId, accountId: string) {
 }
 
 export function getAccount(network: NetworkId, accountId: string) {
-  return rpcCall<{ id: string; balance: string; nonce: number; code_hash: string }>(
-    network, "solen_getAccount", [accountId],
-  );
+  return rpcCall<{
+    id: string;
+    balance: string;
+    nonce: number;
+    code_hash: string;
+    /** Externally-tagged auth methods, e.g. {"Ed25519":{"public_key":[…]}} or
+     *  {"Session":{…}}. Used to compose SetAuth without clobbering. */
+    auth_methods?: Array<Record<string, unknown>>;
+  }>(network, "solen_getAccount", [accountId]);
 }
 
 export function submitOperation(network: NetworkId, operation: unknown) {

@@ -1212,6 +1212,14 @@ function DappApproval({ request, onDone }: { request: { id: string; origin: stri
   const isContractCall = txData?.method && !isTokenTx && !isMultiAction;
   const truncAddr = (addr: string) => addr.length > 16 ? `${addr.slice(0, 8)}...${addr.slice(-6)}` : addr;
 
+  // Agent grant/revoke request data.
+  const agentData = request.data as {
+    agentPublicKey?: string;
+    grant?: { budgetTotal?: string; spendingLimit?: string; allowedMethods?: string[]; allowedTargets?: string[]; expiresAt?: number; restrictSubcalls?: boolean };
+  } | null;
+  const fmtSolen = (base?: string) =>
+    base && base !== "0" ? `${(Number(base) / 1e8).toLocaleString()} SOLEN` : "unlimited";
+
   const getTxLabel = () => {
     if (isMultiAction) return `${txData!.actions!.length} Actions`;
     if (isContractCall) return "Contract Call";
@@ -1236,7 +1244,10 @@ function DappApproval({ request, onDone }: { request: { id: string; origin: stri
       </div>
 
       <h2 className="text-lg font-bold text-gray-200 mb-1">
-        {request.type === "connect" ? "Connection Request" : "Sign Transaction"}
+        {request.type === "connect" ? "Connection Request"
+          : request.type === "grant" ? "Grant Agent Access"
+          : request.type === "revoke" ? "Revoke Agent Access"
+          : "Sign Transaction"}
       </h2>
       <p className="text-gray-500 text-xs mb-3 text-center">{request.origin}</p>
 
@@ -1244,6 +1255,53 @@ function DappApproval({ request, onDone }: { request: { id: string; origin: stri
         <p className="text-gray-400 text-xs mb-6 text-center">
           This site wants to connect to your Solen wallet.
         </p>
+      ) : (request.type === "grant" || request.type === "revoke") ? (
+        <div className="w-full bg-gray-900 rounded-xl p-4 mb-4 space-y-2">
+          {request.type === "grant" ? (
+            <>
+              <div className="text-center mb-2">
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-500/15 text-amber-400">Grant Agent Session Key</span>
+              </div>
+              <div className="flex justify-between text-xs pt-1">
+                <span className="text-gray-500">Agent key</span>
+                <span className="text-gray-300 font-mono">{truncAddr(agentData?.agentPublicKey || "")}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Lifetime budget</span>
+                <span className="text-gray-300">{fmtSolen(agentData?.grant?.budgetTotal)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Per-op limit</span>
+                <span className="text-gray-300">{fmtSolen(agentData?.grant?.spendingLimit)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Methods</span>
+                <span className="text-gray-300">{agentData?.grant?.allowedMethods?.length ? agentData.grant.allowedMethods.join(", ") : "any"}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Sub-call lockdown</span>
+                <span className="text-gray-300">{agentData?.grant?.restrictSubcalls ? "Yes — allowlist applies to sub-calls" : "No"}</span>
+              </div>
+              {agentData?.grant?.expiresAt && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Expires at height</span>
+                  <span className="text-gray-300">{agentData.grant.expiresAt}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="text-center mb-2">
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-red-500/15 text-red-400">Revoke Agent</span>
+              </div>
+              <div className="flex justify-between text-xs pt-1">
+                <span className="text-gray-500">Agent key</span>
+                <span className="text-gray-300 font-mono">{truncAddr(agentData?.agentPublicKey || "")}</span>
+              </div>
+              <p className="text-gray-400 text-xs text-center pt-2">This removes the agent's session key from your account.</p>
+            </>
+          )}
+        </div>
       ) : (
         <div className="w-full bg-gray-900 rounded-xl p-4 mb-4 space-y-2">
           {txData ? (

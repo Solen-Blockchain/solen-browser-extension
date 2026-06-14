@@ -56,6 +56,23 @@
     <div id="send-status" class="status"></div>
   </div>
 
+  <!-- Grant / Revoke Agent -->
+  <div class="card">
+    <h3>4. Grant / Revoke Agent</h3>
+    <label>Agent public key (hex)</label>
+    <input id="agent-key" placeholder="32-byte ed25519 pubkey hex" />
+    <button id="btn-genkey" type="button">Generate key</button>
+    <label>Lifetime budget (SOLEN, blank = unlimited)</label>
+    <input id="agent-budget" placeholder="e.g. 10" />
+    <label>Allowed methods (comma-separated, blank = any)</label>
+    <input id="agent-methods" placeholder="e.g. transfer" />
+    <label>Expires at block height (blank = none)</label>
+    <input id="agent-expires" placeholder="e.g. 800000" />
+    <button id="btn-grant" disabled>Grant Agent</button>
+    <button id="btn-revoke" disabled>Revoke Agent</button>
+    <div id="agent-status" class="status"></div>
+  </div>
+
   <!-- Log -->
   <div class="card">
     <h3>Event Log</h3>
@@ -108,6 +125,8 @@
             `<div class="account">${a}</div>`
           ).join("");
           document.getElementById("btn-send").disabled = false;
+          document.getElementById("btn-grant").disabled = false;
+          document.getElementById("btn-revoke").disabled = false;
           log(`Connected: ${accounts.length} account(s)`);
         } else {
           statusEl.textContent = "Connection pending — check extension popup";
@@ -155,6 +174,58 @@
         statusEl.textContent = `Error: ${e.message}`;
         statusEl.className = "status err";
         log(`Send error: ${e.message}`);
+      }
+    });
+
+    // 4. Grant / Revoke agent
+    document.getElementById("btn-genkey").addEventListener("click", async () => {
+      try {
+        const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+        const raw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+        const hex = [...raw].map((b) => b.toString(16).padStart(2, "0")).join("");
+        document.getElementById("agent-key").value = hex;
+        log(`Generated agent key ${hex.slice(0, 16)}… (demo only — a real agent keeps its own secret)`);
+      } catch (e) {
+        log(`WebCrypto Ed25519 unavailable here — paste a key from @solen/web-sdk generateAgentKey(). ${e.message}`);
+      }
+    });
+
+    document.getElementById("btn-grant").addEventListener("click", async () => {
+      const statusEl = document.getElementById("agent-status");
+      const agentPublicKey = document.getElementById("agent-key").value.trim();
+      if (!agentPublicKey) { statusEl.textContent = "Enter or generate an agent key"; statusEl.className = "status err"; return; }
+      const budget = document.getElementById("agent-budget").value.trim();
+      const methods = document.getElementById("agent-methods").value.trim();
+      const expires = document.getElementById("agent-expires").value.trim();
+      const grant = {};
+      if (budget) grant.budgetTotal = BigInt(Math.round(parseFloat(budget) * 1e8)).toString(); // SOLEN → base units
+      if (methods) grant.allowedMethods = methods.split(",").map((s) => s.trim()).filter(Boolean);
+      if (expires) grant.expiresAt = parseInt(expires, 10);
+      try {
+        log("Requesting agent grant — approve in the extension popup…");
+        const result = await window.solen.grantAgent({ agentPublicKey, grant });
+        log(`Grant result: ${JSON.stringify(result)}`);
+        const err = result && result.error;
+        statusEl.textContent = err ? `Error: ${err}` : "Agent granted!";
+        statusEl.className = err ? "status err" : "status ok";
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`; statusEl.className = "status err"; log(`Grant error: ${e.message}`);
+      }
+    });
+
+    document.getElementById("btn-revoke").addEventListener("click", async () => {
+      const statusEl = document.getElementById("agent-status");
+      const agentPublicKey = document.getElementById("agent-key").value.trim();
+      if (!agentPublicKey) { statusEl.textContent = "Enter the agent key to revoke"; statusEl.className = "status err"; return; }
+      try {
+        log("Requesting agent revoke — approve in the extension popup…");
+        const result = await window.solen.revokeAgent({ agentPublicKey });
+        log(`Revoke result: ${JSON.stringify(result)}`);
+        const err = result && result.error;
+        statusEl.textContent = err ? `Error: ${err}` : "Agent revoked!";
+        statusEl.className = err ? "status err" : "status ok";
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`; statusEl.className = "status err"; log(`Revoke error: ${e.message}`);
       }
     });
   </script>

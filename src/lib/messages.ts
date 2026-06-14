@@ -31,8 +31,32 @@ export type BackgroundRequest =
   | { type: "DAPP_GET_ACCOUNTS"; origin: string }
   | { type: "DAPP_SIGN_AND_SUBMIT"; origin: string; operation: unknown }
   | { type: "DAPP_SIGN_MESSAGE"; origin: string; message: string }
+  | { type: "DAPP_GRANT_AGENT"; origin: string; request: GrantAgentRequest }
+  | { type: "DAPP_REVOKE_AGENT"; origin: string; request: RevokeAgentRequest }
   | { type: "APPROVE_DAPP_REQUEST"; requestId: string }
   | { type: "REJECT_DAPP_REQUEST"; requestId: string };
+
+/** Restrictions for a granted agent session key. Amounts are decimal strings of
+ *  BASE units (1 SOLEN = 1e8). Mirrors @solen/agent-sdk's SessionGrant. */
+export interface AgentSessionGrant {
+  budgetTotal?: string;
+  spendingLimit?: string;
+  allowedTargets?: string[];
+  allowedMethods?: string[];
+  expiresAt?: number;
+  /** Enforce the allowlist on contract sub-calls too (whole call tree). Default false. */
+  restrictSubcalls?: boolean;
+}
+
+export interface GrantAgentRequest {
+  /** The agent's ed25519 session public key (hex or base58). */
+  agentPublicKey: string;
+  grant: AgentSessionGrant;
+}
+
+export interface RevokeAgentRequest {
+  agentPublicKey: string;
+}
 
 export interface TxSummary {
   block_height: number;
@@ -70,7 +94,7 @@ export interface WalletState {
 export interface DappRequest {
   id: string;
   origin: string;
-  type: "connect" | "sign" | "signMessage";
+  type: "connect" | "sign" | "signMessage" | "grant" | "revoke";
   data?: unknown;
 }
 
